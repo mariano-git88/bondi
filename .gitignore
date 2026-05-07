@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Output del pipeline de ingestion. Cada quien lo regenera con
+# `python ingestion/ingest_shopify.py`. No comiteamos data por:
+# - Tamaño: ~1.6 MB ahora, crece con catálogo.
+# - Frescura: cambia diariamente cuando cambian precios/stock.
+data/*.jsonl
+data/*.json
+
+# Vector store (Fase 1.2). Tampoco comiteamos.
+data/*.faiss
+data/*.npy
+data/*.pkl
+
+# Secrets locales
+.env
+.env.local
+*.pem
+*.key
+
+# Logs
+*.log

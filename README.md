@@ -20,7 +20,9 @@ funcionales y stacks distintos.
 - [x] **1.3 — Backend FastAPI con Claude tool use**: 4 tools
   (search_catalog, get_product_details, compare_products,
   escalate_to_human). Endpoint `POST /chat` stateless.
-- [ ] **1.4 — Frontend chat embebible** (web component vanilla).
+- [x] **1.4 — Frontend chat**: `frontend/index.html` standalone (HTML
+  + JS + CSS embebidos, sin frameworks). Markdown rendering nativo,
+  history persistente en localStorage, ejemplos clicables.
 - [ ] **1.5 — Backoffice Streamlit** (auth + curaduría + insights + upload PDFs).
 - [ ] **1.6 — Pipeline de PDFs subidos → re-ingestion**.
 - [ ] **1.7 — Deploy + monitoreo**.
@@ -37,6 +39,23 @@ funcionales y stacks distintos.
 | Frontend chat | Web component vanilla embebible |
 | Hosting backend | Render |
 | Cron re-ingestion | GitHub Actions diario |
+
+## Cómo correr el frontend (sub-fase 1.4)
+
+Pre-requisito: backend levantado en `localhost:8000` (sub-fase 1.3).
+
+En otra terminal, desde la raíz del repo:
+
+```bash
+python -m http.server 5000 -d frontend
+```
+
+Abrí `http://localhost:5000/` en el browser. Vas a ver el chat con
+ejemplos clicables. La conversación persiste en localStorage entre
+refreshes.
+
+Para producción, cuando deployemos el backend, hay que cambiar
+`API_URL` en `frontend/index.html:184` por la URL pública del Render.
 
 ## Cómo correr el backend (sub-fase 1.3)
 

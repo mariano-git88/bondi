@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Asistente Suprabond</title>
+  <style>
+    :root {
+      --primary: #C8552F;
+      --primary-dark: #A8451F;
+      --bg: #FAFAFA;
+      --bubble-user: #1a3a5c;
+      --bubble-bot: #FFFFFF;
+      --text: #1a1a1a;
+      --text-soft: #666;
+      --border: #E0E0E0;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background: white;
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    header h1 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+    }
+    header h1 .subtitle {
+      font-weight: 400;
+      color: var(--text-soft);
+      font-size: 13px;
+      margin-left: 8px;
+    }
+    header button {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-soft);
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    header button:hover {
+      background: #F0F0F0;
+    }
+    main {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      max-width: 760px;
+      width: 100%;
+      margin: 0 auto;
+    }
+    .empty-state {
+      text-align: center;
+      color: var(--text-soft);
+      margin-top: 40px;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+    .empty-state h2 {
+      color: var(--text);
+      font-size: 18px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+    .examples {
+      margin-top: 20px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+    }
+    .example-chip {
+      background: white;
+      border: 1px solid var(--border);
+      padding: 8px 14px;
+      border-radius: 16px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text);
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .example-chip:hover {
+      border-color: var(--primary);
+      background: #FFF5F0;
+    }
+    .message {
+      margin-bottom: 12px;
+      display: flex;
+    }
+    .message.user { justify-content: flex-end; }
+    .message.assistant { justify-content: flex-start; }
+    .bubble {
+      max-width: 80%;
+      padding: 10px 14px;
+      border-radius: 12px;
+      font-size: 14px;
+      line-height: 1.5;
+      word-wrap: break-word;
+    }
+    .message.user .bubble {
+      background: var(--bubble-user);
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+    .message.assistant .bubble {
+      background: var(--bubble-bot);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+    .message.assistant .bubble a {
+      color: var(--primary);
+      text-decoration: underline;
+    }
+    .message.assistant .bubble a:hover {
+      color: var(--primary-dark);
+    }
+    .message.assistant .bubble strong { font-weight: 600; }
+    .message.assistant .bubble em { color: var(--text-soft); font-style: italic; }
+    .message.assistant .bubble blockquote {
+      border-left: 3px solid var(--primary);
+      padding-left: 10px;
+      margin: 8px 0;
+      color: var(--text-soft);
+      font-size: 13px;
+    }
+    .message.assistant .bubble ul {
+      margin: 6px 0;
+      padding-left: 18px;
+    }
+    .message.assistant .bubble li { margin: 4px 0; }
+    .typing-indicator {
+      display: inline-block;
+    }
+    .typing-indicator span {
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      background: var(--text-soft);
+      border-radius: 50%;
+      margin: 0 2px;
+      animation: typing 1.2s infinite;
+    }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes typing {
+      0%, 60%, 100% { opacity: 0.3; }
+      30% { opacity: 1; }
+    }
+    footer {
+      background: white;
+      border-top: 1px solid var(--border);
+      padding: 12px 20px;
+    }
+    .input-row {
+      max-width: 760px;
+      margin: 0 auto;
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+    }
+    .input-row textarea {
+      flex: 1;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-family: inherit;
+      font-size: 14px;
+      resize: none;
+      min-height: 40px;
+      max-height: 120px;
+      outline: none;
+    }
+    .input-row textarea:focus {
+      border-color: var(--primary);
+    }
+    .input-row button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 18px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      height: 40px;
+    }
+    .input-row button:hover:not(:disabled) {
+      background: var(--primary-dark);
+    }
+    .input-row button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .disclaimer {
+      max-width: 760px;
+      margin: 8px auto 0;
+      font-size: 11px;
+      color: var(--text-soft);
+      text-align: center;
+    }
+    @media (max-width: 600px) {
+      .bubble { max-width: 90%; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Asistente Suprabond <span class="subtitle">Recomendador de productos</span></h1>
+    <button id="resetBtn">Limpiar</button>
+  </header>
+
+  <main id="messages">
+    <div class="empty-state" id="emptyState">
+      <h2>¿En qué te ayudo?</h2>
+      <p>Preguntame sobre adhesivos, selladores, herramientas, candados — todo el catálogo de Suprabond, Bulit y Somerset.</p>
+      <div class="examples">
+        <button class="example-chip" data-q="¿Qué adhesivo uso para pegar madera?">¿Qué adhesivo para madera?</button>
+        <button class="example-chip" data-q="Necesito un sellador para una ventana de aluminio">Sellador para ventana de aluminio</button>
+        <button class="example-chip" data-q="¿Qué destornilladores Phillips tienen?">Destornilladores Phillips</button>
+        <button class="example-chip" data-q="Recomendame un candado resistente para portón exterior">Candado para exterior</button>
+      </div>
+    </div>
+  </main>
+
+  <footer>
+    <div class="input-row">
+      <textarea id="input" placeholder="Escribí tu pregunta..." rows="1"></textarea>
+      <button id="sendBtn">Enviar</button>
+    </div>
+    <div class="disclaimer">
+      Las recomendaciones son orientativas — para uso técnico delicado, consultá siempre la ficha técnica del producto y/o un profesional.
+    </div>
+  </footer>
+
+  <script>
+    // ============================================================
+    // Configuración — apuntar al backend.
+    // En producción cambiar a la URL del Render: "https://bondi-api.onrender.com"
+    // ============================================================
+    const API_URL = "http://localhost:8000/chat";
+    const STORAGE_KEY = "bondi_history";
+
+    const messagesEl = document.getElementById("messages");
+    const emptyStateEl = document.getElementById("emptyState");
+    const inputEl = document.getElementById("input");
+    const sendBtn = document.getElementById("sendBtn");
+    const resetBtn = document.getElementById("resetBtn");
+
+    // History persistente entre refresh.
+    let history = [];
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) history = JSON.parse(raw);
+    } catch (e) { history = []; }
+
+    function persistHistory() {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(history)); }
+      catch (e) {}
+    }
+
+    function clearChat() {
+      history = [];
+      persistHistory();
+      // Borrar todos los mensajes del DOM.
+      [...messagesEl.querySelectorAll(".message")].forEach(n => n.remove());
+      emptyStateEl.style.display = "";
+    }
+
+    // ============================================================
+    // Markdown minimal: bold, italic, links, blockquote, ul/li, newlines.
+    // No usamos lib externa — el output del backend es controlado.
+    // ============================================================
+    function escapeHtml(s) {
+      return s
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;");
+    }
+    function renderMarkdown(text) {
+      let s = escapeHtml(text);
+      // Code blocks (no soportados acá pero por las dudas).
+      s = s.replace(/```([\s\S]*?)```/g, (_, code) => `<pre>${code}</pre>`);
+      // Links [texto](url) — antes que bold por si hay markdown anidado.
+      s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+      // Bold **texto**
+      s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+      // Italic *texto* (cuidado de no chocar con bold ya rendered).
+      s = s.replace(/(?<!\*)\*([^*\n]+)\*(?!\*)/g, "<em>$1</em>");
+      // Blockquote: líneas que empiezan con >
+      s = s.replace(/^&gt;\s?(.+)$/gm, "<blockquote>$1</blockquote>");
+      // Bullets - texto al inicio de línea.
+      s = s.replace(/^- (.+)$/gm, "<li>$1</li>");
+      s = s.replace(/(<li>.*?<\/li>(?:\s*<li>.*?<\/li>)*)/gs, "<ul>$1</ul>");
+      // Newlines dobles → <br><br>; simples → <br>.
+      s = s.replace(/\n\n+/g, "<br><br>");
+      s = s.replace(/\n/g, "<br>");
+      // Limpiar <br> dentro de <ul>/<li>.
+      s = s.replace(/<br>(\s*<li>)/g, "$1");
+      s = s.replace(/(<\/li>)<br>/g, "$1");
+      return s;
+    }
+
+    function appendMessage(role, text, isMarkdown) {
+      emptyStateEl.style.display = "none";
+      const div = document.createElement("div");
+      div.className = "message " + role;
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      if (isMarkdown) {
+        bubble.innerHTML = renderMarkdown(text);
+      } else {
+        bubble.textContent = text;
+      }
+      div.appendChild(bubble);
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      return bubble;
+    }
+
+    function appendTyping() {
+      emptyStateEl.style.display = "none";
+      const div = document.createElement("div");
+      div.className = "message assistant";
+      div.id = "typing";
+      div.innerHTML = '<div class="bubble"><span class="typing-indicator"><span></span><span></span><span></span></span></div>';
+      messagesEl.appendChild(div);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    }
+    function removeTyping() {
+      const t = document.getElementById("typing");
+      if (t) t.remove();
+    }
+
+    // Re-render history al cargar.
+    function rebuildFromHistory() {
+      [...messagesEl.querySelectorAll(".message")].forEach(n => n.remove());
+      if (!history.length) {
+        emptyStateEl.style.display = "";
+        return;
+      }
+      emptyStateEl.style.display = "none";
+      for (const m of history) {
+        if (m.role === "user" && typeof m.content === "string") {
+          appendMessage("user", m.content, false);
+        } else if (m.role === "assistant" && Array.isArray(m.content)) {
+          // Concatenar todos los bloques de texto del turn.
+          const texts = m.content.filter(b => b.type === "text").map(b => b.text);
+          if (texts.length) {
+            appendMessage("assistant", texts.join("\n\n"), true);
+          }
+        }
+      }
+    }
+
+    async function sendMessage(message) {
+      if (!message.trim()) return;
+      appendMessage("user", message, false);
+      sendBtn.disabled = true;
+      inputEl.disabled = true;
+      appendTyping();
+      try {
+        const res = await fetch(API_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, history })
+        });
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        history = data.history;
+        persistHistory();
+        removeTyping();
+        appendMessage("assistant", data.response, true);
+      } catch (err) {
+        removeTyping();
+        appendMessage(
+          "assistant",
+          "Disculpá, hubo un error al conectar con el asistente. Probá de nuevo en unos segundos.",
+          false
+        );
+        console.error(err);
+      } finally {
+        sendBtn.disabled = false;
+        inputEl.disabled = false;
+        inputEl.focus();
+      }
+    }
+
+    // Event listeners.
+    sendBtn.addEventListener("click", () => {
+      const text = inputEl.value;
+      if (!text.trim()) return;
+      inputEl.value = "";
+      autoResize();
+      sendMessage(text);
+    });
+    inputEl.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.shiftKey) {
+        e.preventDefault();
+        sendBtn.click();
+      }
+    });
+    function autoResize() {
+      inputEl.style.height = "40px";
+      inputEl.style.height = Math.min(120, inputEl.scrollHeight) + "px";
+    }
+    inputEl.addEventListener("input", autoResize);
+
+    document.querySelectorAll(".example-chip").forEach(chip => {
+      chip.addEventListener("click", () => sendMessage(chip.dataset.q));
+    });
+
+    resetBtn.addEventListener("click", () => {
+      if (history.length === 0 || confirm("¿Borrar la conversación?")) {
+        clearChat();
+      }
+    });
+
+    // Init.
+    rebuildFromHistory();
+    inputEl.focus();
+  </script>
+</body>
+</html>

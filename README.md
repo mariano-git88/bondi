@@ -15,11 +15,11 @@ funcionales y stacks distintos.
 
 - [x] **1.1 — Setup repo + ingestion Shopify**: 691 productos del catálogo
   AR descargados y normalizados a JSONL en 6.4s.
-- [x] **1.2 — Vector store FAISS + embeddings OpenAI**: scripts
-  `embeddings/build_index.py` + `embeddings/search.py`. Pendiente:
-  correr `build_index.py` con `OPENAI_API_KEY` para generar el index.
-- [ ] **1.3 — Backend FastAPI con Claude tool use**: 4 tools (search,
-  get_details, compare, escalate).
+- [x] **1.2 — Vector store FAISS + embeddings OpenAI**: 693 productos
+  indexados, retrieval top-5 ~87% relevancia validada con queries reales.
+- [x] **1.3 — Backend FastAPI con Claude tool use**: 4 tools
+  (search_catalog, get_product_details, compare_products,
+  escalate_to_human). Endpoint `POST /chat` stateless.
 - [ ] **1.4 — Frontend chat embebible** (web component vanilla).
 - [ ] **1.5 — Backoffice Streamlit** (auth + curaduría + insights + upload PDFs).
 - [ ] **1.6 — Pipeline de PDFs subidos → re-ingestion**.
@@ -37,6 +37,34 @@ funcionales y stacks distintos.
 | Frontend chat | Web component vanilla embebible |
 | Hosting backend | Render |
 | Cron re-ingestion | GitHub Actions diario |
+
+## Cómo correr el backend (sub-fase 1.3)
+
+Pre-requisitos: ya corriste `ingestion/ingest_shopify.py` y
+`embeddings/build_index.py` (sub-fases 1.1 y 1.2).
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+export OPENAI_API_KEY=sk-...
+uvicorn backend.main:app --reload --port 8000
+```
+
+Endpoint principal:
+
+```bash
+curl -X POST http://localhost:8000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message": "qué adhesivo me sirve para pegar madera?", "history": []}'
+```
+
+El response incluye: `response` (texto natural), `history` (para mantener
+contexto en el próximo turno) y `tool_calls` (debugging).
+
+Healthcheck:
+
+```bash
+curl http://localhost:8000/healthz
+```
 
 ## Cómo correr la ingestion (sub-fase 1.1)
 

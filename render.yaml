@@ -1,0 +1,42 @@
+# Configuración de deploy a Render — https://render.com/docs/blueprint-spec
+#
+# Este archivo describe el servicio web del backend de bondi. Render lo lee
+# y crea / actualiza el servicio cuando lo conectás al repo.
+#
+# Build command:
+#   1. Instala dependencias.
+#   2. Ingesta el catálogo de Shopify y construye el FAISS index.
+#      Esto requiere OPENAI_API_KEY como secret en Render. Se hace al
+#      build (no al startup) para que el primer request sea rápido.
+#
+# Start command:
+#   uvicorn arrancando con la PORT que da Render.
+#
+# Caveats del free tier:
+#   - 512 MB RAM (suficiente para 693 productos en FAISS).
+#   - Duerme tras 15 min sin tráfico → cold start ~30s al despertar.
+#     El FAISS se mantiene en disco persistido del container, así que
+#     NO hay que re-buildear el index al despertar (solo cargar).
+#   - Re-ingestion: GitHub Actions cron diario que dispara webhook de
+#     Render para forzar redeploy. Ver `.github/workflows/cron.yml`.
+
+services:
+  - type: web
+    name: bondi-api
+    runtime: python
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: |
+      pip install -r requirements.txt
+      python ingestion/ingest_shopify.py
+      python embeddings/build_index.py
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: ANTHROPIC_API_KEY
+        sync: false   # secret — se configura en el dashboard de Render
+      - key: OPENAI_API_KEY
+        sync: false   # idem
+      - key: PYTHON_VERSION
+        value: 3.12.5
+    healthCheckPath: /healthz

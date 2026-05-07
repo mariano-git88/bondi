@@ -25,7 +25,10 @@ funcionales y stacks distintos.
   history persistente en localStorage, ejemplos clicables.
 - [ ] **1.5 — Backoffice Streamlit** (auth + curaduría + insights + upload PDFs).
 - [ ] **1.6 — Pipeline de PDFs subidos → re-ingestion**.
-- [ ] **1.7 — Deploy + monitoreo**.
+- [x] **1.7 — Deploy**: `render.yaml` para backend en Render, `docs/`
+  como source de GitHub Pages para frontend, cron diario que dispara
+  redeploy de Render para refrescar catálogo. Pendiente: configurar en
+  Render + GitHub Pages + secrets.
 
 ## Arquitectura confirmada
 
@@ -39,6 +42,42 @@ funcionales y stacks distintos.
 | Frontend chat | Web component vanilla embebible |
 | Hosting backend | Render |
 | Cron re-ingestion | GitHub Actions diario |
+
+## Cómo deployar (sub-fase 1.7)
+
+Dos servicios separados: **backend en Render** + **frontend en GitHub Pages**.
+
+### Backend (Render)
+
+1. Ir a https://dashboard.render.com → New → Blueprint.
+2. Conectar el repo `bondi`. Render detecta `render.yaml` y arma el servicio.
+3. En **Environment**, configurar los 2 secrets (sync = false en yaml, hay que pegarlos en el dashboard):
+   - `ANTHROPIC_API_KEY`
+   - `OPENAI_API_KEY`
+4. Click "Create Service". El primer deploy tarda ~3 minutos (instala deps + ingesta catálogo + construye FAISS index).
+5. URL del servicio: `https://bondi-api.onrender.com` (Render asigna el slug; si pidió otro nombre, ajustar `BONDI_API_PROD` en `frontend/index.html` y `docs/index.html`).
+6. Validar: `https://bondi-api.onrender.com/healthz` → debe devolver `engine_loaded: true`, `products_loaded: 693`.
+
+Caveats del free tier:
+- Duerme tras 15 min sin tráfico → cold start ~30-60s al despertar.
+- Si crece el uso, escalar a Starter ($7/mes) elimina el sleep.
+
+### Frontend (GitHub Pages)
+
+1. En el repo bondi → Settings → Pages.
+2. Source: "Deploy from a branch".
+3. Branch: `main`, folder: `/docs`. Save.
+4. URL: `https://mariano-git88.github.io/bondi/`.
+5. (Opcional) Custom domain `chat.suprabond.com` o similar — configurar CNAME en GoDaddy / DNS apuntando a `mariano-git88.github.io`.
+
+### Cron de re-ingestion
+
+`.github/workflows/cron-reindex.yml` corre todos los días a las 06:00 UTC y dispara un redeploy de Render. Setup:
+
+1. En Render → tu servicio → Settings → Deploy Hook URL → copiar URL.
+2. En GitHub → repo bondi → Settings → Secrets and variables → Actions → New repository secret.
+3. Nombre: `RENDER_DEPLOY_HOOK_URL`. Valor: la URL.
+4. Commit + push. Disparable también manualmente desde Actions → Run workflow.
 
 ## Cómo correr el frontend (sub-fase 1.4)
 

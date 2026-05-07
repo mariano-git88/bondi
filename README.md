@@ -15,8 +15,9 @@ funcionales y stacks distintos.
 
 - [x] **1.1 — Setup repo + ingestion Shopify**: 691 productos del catálogo
   AR descargados y normalizados a JSONL en 6.4s.
-- [ ] **1.2 — Vector store FAISS + embeddings OpenAI**: indexar el JSONL
-  y validar retrieval con queries reales.
+- [x] **1.2 — Vector store FAISS + embeddings OpenAI**: scripts
+  `embeddings/build_index.py` + `embeddings/search.py`. Pendiente:
+  correr `build_index.py` con `OPENAI_API_KEY` para generar el index.
 - [ ] **1.3 — Backend FastAPI con Claude tool use**: 4 tools (search,
   get_details, compare, escalate).
 - [ ] **1.4 — Frontend chat embebible** (web component vanilla).

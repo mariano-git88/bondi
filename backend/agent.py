@@ -83,7 +83,14 @@ def responder(
             tools=TOOLS,
             messages=messages,
         )
-        messages.append({"role": "assistant", "content": response.content})
+        # Convertir blocks del SDK a dicts plain. Pydantic no sabe
+        # serializar TextBlock/ToolUseBlock directos cuando devolvemos
+        # `messages` en el response del endpoint.
+        content_dicts = [
+            b.model_dump() if hasattr(b, "model_dump") else dict(b)
+            for b in response.content
+        ]
+        messages.append({"role": "assistant", "content": content_dicts})
 
         if response.stop_reason == "end_turn":
             text_blocks = [b.text for b in response.content if getattr(b, "type", "") == "text"]

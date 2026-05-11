@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Asistente Suprabond</title>
+  <title>Bondi — Asistente de Suprabond</title>
+  <link rel="icon" type="image/png" href="logo.png">
+  <meta name="description" content="Asistente de Suprabond Argentina. Recomendaciones del catálogo de Suprabond, Bulit y Somerset.">
   <style>
     :root {
       --primary: #C8552F;
@@ -33,16 +35,29 @@
       align-items: center;
       justify-content: space-between;
     }
+    header .brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header .brand img {
+      height: 36px;
+      width: auto;
+    }
+    header .brand-text {
+      display: flex;
+      flex-direction: column;
+      line-height: 1.2;
+    }
     header h1 {
       margin: 0;
       font-size: 16px;
       font-weight: 600;
     }
-    header h1 .subtitle {
+    header .subtitle {
       font-weight: 400;
       color: var(--text-soft);
-      font-size: 13px;
-      margin-left: 8px;
+      font-size: 12px;
     }
     header button {
       background: transparent;
@@ -144,6 +159,40 @@
       padding-left: 18px;
     }
     .message.assistant .bubble li { margin: 4px 0; }
+    .feedback-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 4px;
+      margin-left: 4px;
+      align-items: center;
+    }
+    .feedback-row button {
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      width: 28px;
+      height: 28px;
+      padding: 0;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text-soft);
+      transition: border-color 0.15s, background 0.15s, color 0.15s;
+    }
+    .feedback-row button:hover {
+      border-color: var(--primary);
+      color: var(--primary);
+      background: #FFF5F0;
+    }
+    .feedback-row button.selected {
+      border-color: var(--primary);
+      background: var(--primary);
+      color: white;
+    }
+    .feedback-row .thanks {
+      font-size: 11px;
+      color: var(--text-soft);
+      margin-left: 4px;
+    }
     .typing-indicator {
       display: inline-block;
     }
@@ -221,19 +270,27 @@
 </head>
 <body>
   <header>
-    <h1>Asistente Suprabond <span class="subtitle">Recomendador de productos</span></h1>
+    <div class="brand">
+      <img src="logo.png" alt="Suprabond">
+      <div class="brand-text">
+        <h1>Bondi</h1>
+        <span class="subtitle">Asistente de Suprabond, Bulit y Somerset</span>
+      </div>
+    </div>
     <button id="resetBtn">Limpiar</button>
   </header>
 
   <main id="messages">
     <div class="empty-state" id="emptyState">
-      <h2>¿En qué te ayudo?</h2>
-      <p>Preguntame sobre adhesivos, selladores, herramientas, candados — todo el catálogo de Suprabond, Bulit y Somerset.</p>
+      <h2>Hola 👋 — ¿qué estás buscando?</h2>
+      <p>Te ayudo a encontrar el producto correcto del catálogo de Suprabond, Bulit y Somerset. Puedo recomendarte adhesivos, selladores, herramientas, candados, burletes, accesorios, y más — con link directo a la tienda.</p>
       <div class="examples">
-        <button class="example-chip" data-q="¿Qué adhesivo uso para pegar madera?">¿Qué adhesivo para madera?</button>
-        <button class="example-chip" data-q="Necesito un sellador para una ventana de aluminio">Sellador para ventana de aluminio</button>
-        <button class="example-chip" data-q="¿Qué destornilladores Phillips tienen?">Destornilladores Phillips</button>
-        <button class="example-chip" data-q="Recomendame un candado resistente para portón exterior">Candado para exterior</button>
+        <button class="example-chip" data-q="¿Qué adhesivo uso para pegar madera con metal?">Adhesivo para madera con metal</button>
+        <button class="example-chip" data-q="Necesito un sellador resistente al agua para una ventana de aluminio">Sellador para ventana de aluminio</button>
+        <button class="example-chip" data-q="¿Qué destornilladores Phillips tienen disponibles?">Destornilladores Phillips</button>
+        <button class="example-chip" data-q="Recomendame un candado resistente para portón exterior">Candado para portón exterior</button>
+        <button class="example-chip" data-q="¿Tienen burletes para puerta?">Burletes para puerta</button>
+        <button class="example-chip" data-q="¿Cuál es el adhesivo instantáneo más resistente que tienen?">Adhesivo instantáneo más resistente</button>
       </div>
     </div>
   </main>
@@ -330,7 +387,7 @@
       return s;
     }
 
-    function appendMessage(role, text, isMarkdown) {
+    function appendMessage(role, text, isMarkdown, turnId) {
       emptyStateEl.style.display = "none";
       const div = document.createElement("div");
       div.className = "message " + role;
@@ -342,9 +399,48 @@
         bubble.textContent = text;
       }
       div.appendChild(bubble);
+      // Feedback inline solo en bubbles del bot, cuando tenemos turn_id.
+      if (role === "assistant" && turnId) {
+        const fb = document.createElement("div");
+        fb.className = "feedback-row";
+        const up = document.createElement("button");
+        up.title = "Respuesta útil";
+        up.textContent = "👍";
+        const down = document.createElement("button");
+        down.title = "Respuesta no útil";
+        down.textContent = "👎";
+        const thanks = document.createElement("span");
+        thanks.className = "thanks";
+        up.addEventListener("click", () => sendFeedback(turnId, "good", up, down, thanks));
+        down.addEventListener("click", () => sendFeedback(turnId, "bad", down, up, thanks));
+        fb.appendChild(up);
+        fb.appendChild(down);
+        fb.appendChild(thanks);
+        div.appendChild(fb);
+      }
       messagesEl.appendChild(div);
       messagesEl.scrollTop = messagesEl.scrollHeight;
       return bubble;
+    }
+
+    async function sendFeedback(turnId, rating, selectedBtn, otherBtn, thanksEl) {
+      if (selectedBtn.classList.contains("selected")) return; // ya enviado
+      try {
+        const fbUrl = API_URL.replace(/\/chat$/, "/feedback");
+        const res = await fetch(fbUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ turn_id: turnId, rating })
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        selectedBtn.classList.add("selected");
+        otherBtn.disabled = true;
+        otherBtn.style.opacity = "0.4";
+        thanksEl.textContent = "Gracias por el feedback";
+      } catch (err) {
+        thanksEl.textContent = "No se pudo registrar el feedback";
+        console.error(err);
+      }
     }
 
     function appendTyping() {
@@ -403,7 +499,7 @@
         if (data.session_id) localStorage.setItem(SESSION_KEY, data.session_id);
         persistHistory();
         removeTyping();
-        appendMessage("assistant", data.response, true);
+        appendMessage("assistant", data.response, true, data.turn_id);
       } catch (err) {
         removeTyping();
         appendMessage(

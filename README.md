@@ -29,21 +29,22 @@ Sub-fases entregadas:
 - [x] **1.4** — Frontend chat standalone.
 - [x] **1.5** — Backoffice Streamlit (curaduría + hard rules + logs).
 - [x] **1.6** — Ingestion de PDFs + ingestion web del sitio corporativo.
-- [x] **1.7** — Deploy unificado (Render, backend + frontend juntos).
+- [x] **1.7** — Deploy con dos services Render: `bondi.suprabond.ai` (chat) + `admin.suprabond.ai` (kitchen).
+- [x] **1.8** — Hybrid search (BM25 + vector), feedback público inline, sitemap crawler, tab Test.
 
 ## Arquitectura
 
 | Componente | Tech |
 |---|---|
 | Backend chat | FastAPI + Anthropic SDK (Claude Sonnet 4.6) |
-| Vector store | FAISS local, IndexFlatIP, 1536 dim |
-| Embeddings | OpenAI `text-embedding-3-small` |
-| Logging | SQLite (`data/bondi.db`) |
-| Backoffice | Streamlit, auth por password |
-| Frontend chat | HTML/JS vanilla, montado en `/` del backend |
-| Hosting | Render (single Web Service) |
+| Retrieval | Hybrid BM25 (`rank-bm25`) + vector FAISS (cosine), alpha=0.7 |
+| Embeddings | OpenAI `text-embedding-3-small`, 1536 dim |
+| Logging | SQLite (`data/bondi.db`) con feedback público + admin |
+| Backoffice (kitchen) | Streamlit cliente HTTP del backend, tema Vitsoe/Rams |
+| Frontend chat | HTML/JS vanilla con feedback inline 👍/👎 |
+| Hosting | Render 2 services (`bondi-api` + `bondi-kitchen`) con disk 1GB |
 | PDFs | pypdf, chunking por página |
-| Web crawl | httpx + BeautifulSoup, BFS depth-2 |
+| Web crawl | httpx + BS4 + sitemap.xml + BFS depth-2 fallback |
 
 ## Setup local
 

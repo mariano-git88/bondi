@@ -221,7 +221,7 @@ with _col_btn:
 # Tabs
 # =====================================================================
 
-tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_salud = st.tabs([
+tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_test, tab_salud = st.tabs([
     "📊 Resumen",
     "💬 Conversaciones",
     "📋 FAQs",
@@ -229,6 +229,7 @@ tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_salu
     "📄 PDFs",
     "🌐 Web",
     "🔧 Index",
+    "🧪 Test",
     "❤️ Salud",
 ])
 
@@ -258,11 +259,43 @@ with tab_dash:
 # ---------- Conversaciones ----------
 with tab_chats:
     st.header("Conversaciones")
-    limit = st.slider("Cantidad a mostrar", 10, 500, 50, 10)
-    ok, payload = api_get(backend_url, admin_token, f"/admin/turns?limit={limit}")
+
+    # Filtros en una fila.
+    fcol1, fcol2, fcol3, fcol4 = st.columns([1, 1, 2, 1])
+    with fcol1:
+        limit = st.number_input("Límite", 10, 1000, 100, 10)
+    with fcol2:
+        rating_filter = st.selectbox(
+            "Rating",
+            ["todos", "good", "bad", "flag", "sin feedback"],
+            index=0,
+        )
+    with fcol3:
+        from datetime import date as _date, timedelta as _td
+        since_date = st.date_input(
+            "Desde",
+            value=_date.today() - _td(days=30),
+            help="Solo turns posteriores a esta fecha (00:00 UTC).",
+        )
+    with fcol4:
+        session_filter = st.text_input("Session ID (parcial OK)", value="")
+
+    # Armar query string.
+    params = [f"limit={int(limit)}"]
+    if rating_filter == "sin feedback":
+        params.append("rating=none")
+    elif rating_filter != "todos":
+        params.append(f"rating={rating_filter}")
+    if since_date:
+        params.append(f"since={since_date.isoformat()}T00:00:00")
+    if session_filter.strip():
+        params.append(f"session_id={session_filter.strip()}")
+    query = "&".join(params)
+
+    ok, payload = api_get(backend_url, admin_token, f"/admin/turns?{query}")
     rows = payload.get("turns", []) if (ok and isinstance(payload, dict)) else []
     if not rows:
-        st.info("Todavía no hay conversaciones registradas.")
+        st.info("Sin conversaciones para esos filtros.")
     else:
         df = pd.DataFrame([
             {
@@ -271,11 +304,35 @@ with tab_chats:
                 "session": (r["session_id"] or "")[:8],
                 "user_msg": (r["user_msg"] or "")[:80],
                 "assistant_msg": (r["assistant_msg"] or "")[:80],
-                "feedback": r.get("feedback_count") or 0,
+                "rating": r.get("last_rating") or "—",
+                "feedback_count": r.get("feedback_count") or 0,
             }
             for r in rows
         ])
+        st.markdown(f"**{len(df)} conversaciones**")
         st.dataframe(df, use_container_width=True, hide_index=True)
+
+        # Export CSV de lo filtrado (más detalle que la tabla visible).
+        export_df = pd.DataFrame([
+            {
+                "turn_id": r["turn_id"],
+                "ts": r["ts"],
+                "session_id": r["session_id"],
+                "user_msg": r["user_msg"],
+                "assistant_msg": r["assistant_msg"],
+                "rating": r.get("last_rating") or "",
+                "feedback_count": r.get("feedback_count") or 0,
+                "hard_rules_version": r.get("hard_rules_version"),
+            }
+            for r in rows
+        ])
+        csv_bytes = export_df.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Export CSV",
+            data=csv_bytes,
+            file_name=f"bondi-conversaciones-{datetime.now().strftime('%Y%m%d-%H%M')}.csv",
+            mime="text/csv",
+        )
 
         st.divider()
         sel = st.number_input("Ver detalle de turn_id", min_value=0, step=1, value=0)
@@ -575,6 +632,42 @@ with tab_index:
                     st.error(f"Falló (rc={res.get('returncode')}).")
             else:
                 st.error(f"Falló: {res}")
+
+
+# ---------- Test ----------
+with tab_test:
+    st.header("Test del agent")
+    st.caption("Probá una query SIN registrarla en la DB. Útil para validar cambios "
+               "en hard rules o FAQs antes de soltarlos al público.")
+
+    test_msg = st.text_area(
+        "Mensaje del usuario",
+        height=100,
+        placeholder="Ej: ¿Qué adhesivo recomiendan para pegar madera con metal?",
+        key="test_msg",
+    )
+
+    if st.button("🧪 Probar", type="primary", disabled=not test_msg.strip()):
+        with st.spinner("El agent está pensando..."):
+            ok_t, res = api_post(
+                backend_url, admin_token, "/admin/test_query",
+                json={"message": test_msg.strip(), "history": []},
+                timeout=60.0,
+            )
+        if ok_t and isinstance(res, dict):
+            st.markdown("### 🤖 Respuesta del agent")
+            st.markdown(res.get("response", ""))
+            cols = st.columns(3)
+            cols[0].metric("Tool calls", len(res.get("tool_calls", []) or []))
+            cols[1].metric("Hard rules aplicadas", res.get("hard_rules_count", 0))
+            cols[2].metric("Versión curation", res.get("hard_rules_version", 0))
+
+            tool_calls = res.get("tool_calls", []) or []
+            if tool_calls:
+                with st.expander(f"🔧 Tool calls ({len(tool_calls)})"):
+                    st.json(tool_calls)
+        else:
+            st.error(f"Falló: {res}")
 
 
 # ---------- Salud ----------

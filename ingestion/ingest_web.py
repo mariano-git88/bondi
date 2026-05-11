@@ -25,6 +25,7 @@ import json
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urljoin, urlparse, urldefrag
@@ -110,6 +111,47 @@ def _slug_from_path(path: str) -> str:
     return s.strip("-") or "page"
 
 
+def _fetch_sitemap_urls(client: httpx.Client, base_url: str) -> list[str]:
+    """Intentar leer /sitemap.xml. Soporta sitemap index recursivo (un sitemap
+    que contiene refs a otros sitemaps). Devuelve lista de URLs encontradas.
+
+    Si el sitemap no existe o el parse falla, devuelve []."""
+    try:
+        sitemap_url = base_url.rstrip("/") + "/sitemap.xml"
+        r = client.get(sitemap_url)
+        if r.status_code != 200:
+            return []
+        urls: list[str] = []
+        # Strip namespace para simplificar el parsing.
+        text = re.sub(r'\sxmlns="[^"]+"', "", r.text, count=1)
+        root = ET.fromstring(text)
+        # Caso A: <sitemapindex> con refs a otros sitemaps.
+        for sm in root.findall("sitemap"):
+            loc = sm.find("loc")
+            if loc is not None and loc.text:
+                # Recursión a 1 nivel: bajar los URLs del sub-sitemap.
+                try:
+                    sub = client.get(loc.text.strip())
+                    if sub.status_code == 200:
+                        sub_text = re.sub(r'\sxmlns="[^"]+"', "", sub.text, count=1)
+                        sub_root = ET.fromstring(sub_text)
+                        for u in sub_root.findall("url"):
+                            uloc = u.find("loc")
+                            if uloc is not None and uloc.text:
+                                urls.append(uloc.text.strip())
+                except Exception:
+                    continue
+        # Caso B: <urlset> directo.
+        for u in root.findall("url"):
+            uloc = u.find("loc")
+            if uloc is not None and uloc.text:
+                urls.append(uloc.text.strip())
+        return urls
+    except Exception as exc:
+        print(f"  ! sitemap parse falló para {base_url}: {exc}", file=sys.stderr)
+        return []
+
+
 def crawl(start_urls: list[str], depth: int = DEFAULT_DEPTH, max_pages: int = MAX_PAGES) -> list[dict]:
     valid_starts: list[str] = []
     with httpx.Client(timeout=TIMEOUT, headers={"User-Agent": USER_AGENT}, follow_redirects=True) as client:
@@ -137,8 +179,21 @@ def crawl(start_urls: list[str], depth: int = DEFAULT_DEPTH, max_pages: int = MA
                     allowed_domains.add(".".join(parts[-2:]))
                 allowed_domains.add(host)
 
+        # Intentar sitemap antes del BFS. Si hay sitemap, usamos esas URLs
+        # como seeds adicionales (depth=0) — más completo y rápido.
+        sitemap_urls: list[str] = []
+        for s in valid_starts:
+            parsed = urlparse(s)
+            base = f"{parsed.scheme}://{parsed.netloc}"
+            found = _fetch_sitemap_urls(client, base)
+            if found:
+                print(f"  📄 sitemap.xml encontrado en {base}: {len(found)} URLs")
+                sitemap_urls.extend(found)
+
         visited: set[str] = set()
         queue: list[tuple[str, int]] = [(u, 0) for u in valid_starts]
+        for su in sitemap_urls:
+            queue.append((_normalize(su), 0))
         docs: list[dict] = []
         robots_cache: dict[str, RobotFileParser] = {}
         seen_titles: set[str] = set()

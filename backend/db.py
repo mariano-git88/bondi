@@ -101,29 +101,52 @@ def log_turn(
         return cur.lastrowid
 
 
-def list_recent_turns(limit: int = 100, session_id: str | None = None) -> list[dict]:
+def list_recent_turns(
+    limit: int = 100,
+    session_id: str | None = None,
+    rating: str | None = None,
+    since_iso: str | None = None,
+) -> list[dict]:
+    """Lista turns con conteo de feedback + último rating.
+
+    Filtros opcionales:
+      session_id — solo turns de esa sesión.
+      rating     — 'good' | 'bad' | 'flag' | 'none' (sin feedback).
+      since_iso  — solo turns con ts >= since_iso (ISO 8601 string).
+    """
+    clauses = []
+    params: list = []
+    if session_id:
+        clauses.append("c.session_id = ?")
+        params.append(session_id)
+    if since_iso:
+        clauses.append("c.ts >= ?")
+        params.append(since_iso)
+    where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+    sql = f"""
+        SELECT c.*,
+               COUNT(f.feedback_id) AS feedback_count,
+               (SELECT rating FROM feedback f2
+                WHERE f2.turn_id = c.turn_id
+                ORDER BY f2.ts DESC LIMIT 1) AS last_rating
+        FROM conversations c
+        LEFT JOIN feedback f ON f.turn_id = c.turn_id
+        {where}
+        GROUP BY c.turn_id
+    """
+
+    if rating == "none":
+        sql += " HAVING feedback_count = 0"
+    elif rating in ("good", "bad", "flag"):
+        sql += " HAVING last_rating = ?"
+        params.append(rating)
+
+    sql += " ORDER BY c.ts DESC LIMIT ?"
+    params.append(limit)
+
     with _lock, _connect() as conn:
-        if session_id:
-            rows = conn.execute(
-                """SELECT c.*, COUNT(f.feedback_id) AS feedback_count
-                   FROM conversations c
-                   LEFT JOIN feedback f ON f.turn_id = c.turn_id
-                   WHERE c.session_id = ?
-                   GROUP BY c.turn_id
-                   ORDER BY c.ts DESC
-                   LIMIT ?""",
-                (session_id, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """SELECT c.*, COUNT(f.feedback_id) AS feedback_count
-                   FROM conversations c
-                   LEFT JOIN feedback f ON f.turn_id = c.turn_id
-                   GROUP BY c.turn_id
-                   ORDER BY c.ts DESC
-                   LIMIT ?""",
-                (limit,),
-            ).fetchall()
+        rows = conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
 

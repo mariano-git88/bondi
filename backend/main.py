@@ -162,6 +162,17 @@ class FeedbackRequest(BaseModel):
     operator: str | None = None
 
 
+class PublicFeedbackRequest(BaseModel):
+    """Feedback enviado por usuarios públicos desde el frontend del chat.
+
+    No requiere auth admin. Se valida que el turn_id exista. Se loggea
+    con operator='public' para distinguirlo del feedback interno.
+    """
+    turn_id: int
+    rating: str  # 'good' o 'bad' nada más (no flag desde público)
+    note: str | None = Field(default=None, max_length=500)
+
+
 # =====================================================================
 # Endpoints públicos
 # =====================================================================
@@ -251,6 +262,24 @@ def chat(req: ChatRequest) -> ChatResponse:
     )
 
 
+@app.post("/feedback")
+def public_feedback(req: PublicFeedbackRequest):
+    """Feedback público (sin auth) que el frontend del chat envía al
+    clickear 👍 / 👎 en una respuesta. Validamos que el turn exista y
+    que el rating sea uno de los permitidos para el público."""
+    if req.rating not in ("good", "bad"):
+        raise HTTPException(400, "rating debe ser 'good' o 'bad'.")
+    if not db.get_turn(req.turn_id):
+        raise HTTPException(404, f"turn_id {req.turn_id} no existe.")
+    feedback_id = db.save_feedback(
+        turn_id=req.turn_id,
+        rating=req.rating,
+        note=req.note,
+        operator="public",
+    )
+    return {"feedback_id": feedback_id}
+
+
 # =====================================================================
 # Endpoints admin (backoffice)
 # =====================================================================
@@ -271,10 +300,17 @@ def admin_reload(x_admin_token: str | None = Header(None)):
 
 
 @app.get("/admin/turns")
-def admin_turns(limit: int = 100, session_id: str | None = None,
-                x_admin_token: str | None = Header(None)):
+def admin_turns(
+    limit: int = 100,
+    session_id: str | None = None,
+    rating: str | None = None,
+    since: str | None = None,
+    x_admin_token: str | None = Header(None),
+):
     _check_admin(x_admin_token)
-    return {"turns": db.list_recent_turns(limit=limit, session_id=session_id)}
+    return {"turns": db.list_recent_turns(
+        limit=limit, session_id=session_id, rating=rating, since_iso=since
+    )}
 
 
 @app.get("/admin/turn/{turn_id}")
@@ -471,6 +507,50 @@ def admin_docs_web(x_admin_token: str | None = Header(None)):
     return {"docs": docs}
 
 
+class TestQueryRequest(BaseModel):
+    message: str = Field(..., min_length=1, max_length=2000)
+    history: list[dict] = Field(default_factory=list)
+
+
+@app.post("/admin/test_query")
+def admin_test_query(req: TestQueryRequest, x_admin_token: str | None = Header(None)):
+    """Probar una query del agent SIN persistir el turn en la DB.
+
+    Útil para que el operador valide cambios en hard rules / FAQs antes
+    de soltarlos al público. Devuelve la respuesta + tool calls + versión
+    de hard rules que se usó."""
+    _check_admin(x_admin_token)
+    if _engine is None:
+        raise HTTPException(503, "Search engine no inicializado.")
+    if not _anthropic_api_key:
+        raise HTTPException(503, "ANTHROPIC_API_KEY no configurada.")
+
+    messages: list[dict] = list(req.history) + [
+        {"role": "user", "content": req.message}
+    ]
+    curation_now = agent.load_curation()
+    ctx = {
+        "engine": _engine,
+        "products_by_handle": _products_by_handle,
+        "docs_by_id": _docs_by_id,
+        "curation": curation_now,
+    }
+    try:
+        response_text, tool_calls, hard_rules_version = agent.responder(
+            messages, ctx, _anthropic_api_key
+        )
+    except Exception as exc:
+        log.exception("Error en agent.responder (test)")
+        raise HTTPException(500, f"Agent error: {exc}")
+
+    return {
+        "response": response_text,
+        "tool_calls": tool_calls,
+        "hard_rules_version": hard_rules_version,
+        "hard_rules_count": len(curation_now.get("hard_rules") or []),
+    }
+
+
 @app.get("/admin/health/files")
 def admin_health_files(x_admin_token: str | None = Header(None)):
     _check_admin(x_admin_token)
@@ -518,6 +598,22 @@ if _frontend_dir.exists() and (_frontend_dir / "index.html").exists():
     @app.get("/", include_in_schema=False)
     def frontend_root():
         return FileResponse(str(_frontend_dir / "index.html"))
+
+    @app.get("/logo.png", include_in_schema=False)
+    def frontend_logo():
+        p = _frontend_dir / "logo.png"
+        if not p.exists():
+            raise HTTPException(404, "logo.png no encontrado")
+        return FileResponse(str(p))
+
+    @app.get("/favicon.ico", include_in_schema=False)
+    def frontend_favicon():
+        # Reutilizamos el logo como favicon. Si en el futuro hay un .ico
+        # específico, agregarlo a frontend/ y servirlo acá.
+        p = _frontend_dir / "logo.png"
+        if not p.exists():
+            raise HTTPException(404)
+        return FileResponse(str(p), media_type="image/png")
 
     app.mount("/static", StaticFiles(directory=str(_frontend_dir)), name="static")
     log.info(f"Frontend montado: {_frontend_dir}")

@@ -1,0 +1,44 @@
+# Render blueprint para Bondi — un Web Service que hostea API + chat público.
+#
+# Cómo deployar:
+#   1. Pusheá este repo a GitHub.
+#   2. En Render → New → Blueprint, conectá el repo. Render lee este YAML.
+#   3. Render pide las env vars marcadas `sync: false`:
+#        ANTHROPIC_API_KEY, OPENAI_API_KEY, BONDI_ADMIN_PASS
+#      Completalas y darle "Apply".
+#   4. El build corre ~3 min:
+#        pip install → ingest_shopify (~6s) → ingest_web (~1-2 min, 200 páginas)
+#        → build_index (~15s, ~USD 0.005 a OpenAI).
+#   5. Cuando termine, el chat público queda en https://<service>.onrender.com/
+#      y los endpoints en https://<service>.onrender.com/healthz, /chat, etc.
+#
+# Plan starter ($7/mes) trae disk persistente para data/ — sin él los
+# PDFs subidos al backoffice se pierden en cada deploy. Si querés probar
+# en plan free, sacá la sección `disk:` (build regenera todo cada deploy).
+
+services:
+  - type: web
+    name: bondi-api
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: |
+      pip install -r requirements.txt && \
+      python ingestion/ingest_shopify.py && \
+      python -m ingestion.ingest_web --depth 2 --max-pages 200 && \
+      python -m embeddings.build_index
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthz
+    disk:
+      name: bondi-data
+      mountPath: /opt/render/project/src/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: BONDI_ADMIN_PASS
+        sync: false

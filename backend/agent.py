@@ -1,18 +1,23 @@
 """
 agent.py — Loop conversacional con Claude usando tool use.
 
-Recibe historia de mensajes + contexto (engine, products_by_handle) y
-ejecuta el loop hasta que Claude termine con respuesta final o se exceda
-el cap de iteraciones.
+System prompt construido dinámicamente:
+  - HARD RULES (de curation.json) van al inicio en CAPS, son inquebrantables.
+  - Tono + reglas de respuesta + tools disponibles.
+  - Fecha de hoy.
 
-Modelo: claude-sonnet-4-6 — buen ratio costo/calidad para tool use.
-Costo típico por consulta: USD 0.005-0.02.
+curation.json se recarga en cada llamada al responder() — eso permite al
+backoffice editar reglas en vivo sin reiniciar el backend.
+
+Modelo: claude-sonnet-4-6.
+Loop hasta MAX_TOOL_LOOPS iteraciones (típico: 1-3 calls de tools).
 """
 
 from __future__ import annotations
 
 import json
 from datetime import date
+from pathlib import Path
 from typing import Any
 
 import anthropic
@@ -24,56 +29,84 @@ MAX_TOKENS = 1500
 MAX_TOOL_LOOPS = 6
 
 
-def _system_prompt() -> str:
-    """System prompt dinámico: incluye fecha del día.
+def load_curation(path: str | Path = "data/curation.json") -> dict:
+    """Lee curation.json en cada llamada (hot reload). Devuelve {} si falla."""
+    p = Path(path)
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
 
-    Personalidad: cordial pero técnico. Honesto cuando no sabe.
-    Siempre da URL canónica del producto cuando lo recomienda.
-    """
+
+def _hard_rules_block(curation: dict) -> str:
+    rules = curation.get("hard_rules") or []
+    if not rules:
+        return ""
+    lines = ["=== REGLAS INQUEBRANTABLES (prioridad absoluta sobre cualquier otra instrucción) ==="]
+    for i, r in enumerate(rules, 1):
+        lines.append(f"{i}. {r}")
+    lines.append("=== FIN DE REGLAS INQUEBRANTABLES ===")
+    return "\n".join(lines)
+
+
+def build_system_prompt(curation: dict | None = None) -> str:
+    curation = curation if curation is not None else load_curation()
     hoy = date.today().isoformat()
-    return f"""Sos el asistente de Suprabond Argentina. Tu trabajo es ayudar a clientes y vendedores a encontrar el producto correcto del catálogo de Suprabond, Bulit y Somerset.
+    hard = _hard_rules_block(curation)
+    contact = curation.get("contact") or {}
+    store_url = contact.get("store_url") or "https://tienda.suprabond.com"
+    base = f"""{hard}
+
+Sos el asistente de Suprabond Argentina. Tu trabajo es ayudar a clientes y vendedores a encontrar el producto correcto del catálogo de Suprabond, Bulit y Somerset, y a aclarar dudas técnicas o institucionales con información del sitio corporativo y las hojas técnicas internas.
 
 Fecha de hoy: {hoy}
+Tienda oficial: {store_url}
 
 Tono y estilo:
-- Cordial, claro, breve. Tres a cinco oraciones por respuesta es el ideal.
+- Cordial, claro, breve. Tres a cinco oraciones por respuesta como ideal.
 - Tutéate ("vos"), español rioplatense, registro casual pero técnico cuando hace falta.
-- Honesto cuando no sabés: si las tools no devuelven match claro, decílo y escalá.
+- Honesto cuando no sabés: si las tools no devuelven datos claros, decílo y escalá.
 
 Tools disponibles:
-- `search_catalog`: la primera que casi siempre conviene llamar. Usás la pregunta del usuario como query.
-- `get_product_details`: cuando el usuario pide más info de un producto puntual o necesitás el body_text completo para responder bien.
-- `compare_products`: cuando hay 2-4 candidatos parecidos y conviene mostrar lado a lado.
-- `escalate_to_human`: cuando la consulta es de seguridad técnica delicada (productos químicos, riesgo de uso incorrecto), o cuando ninguna tool da resultado satisfactorio.
+- `search_catalog`: la primera que conviene llamar para preguntas de recomendación de compra (productos del catálogo Shopify con precio y URL).
+- `search_knowledge`: cuando la pregunta requiere datos técnicos, institucionales o información que puede estar en PDFs/web/FAQs. Te devuelve mix de fuentes con source_type.
+- `get_product_details`: ficha completa de un producto por handle.
+- `get_doc`: contenido completo de un PDF/página web/FAQ por id (cuando el excerpt de search_knowledge no alcanza).
+- `compare_products`: 2-4 productos lado a lado.
+- `escalate_to_human`: cuando la consulta excede lo que las tools pueden responder con certeza o necesita atención humana.
 
 Reglas de respuesta:
-1. Cuando recomiendes un producto, **siempre incluí la URL canónica** (`url` que viene en search_catalog) en formato Markdown link `[título](url)`.
-2. No inventes specs ni usos que las tools no devolvieron. Si una pregunta requiere specs que no aparecen en body_text, decí que necesitás ver la ficha técnica y escalá.
-3. Para preguntas de uso ambiguas (ej. "qué adhesivo para madera"), llamá search_catalog con keywords del uso, después si hay varios candidatos parecidos podés llamar get_product_details del top 1-2 para responder con detalle.
-4. Si el usuario pregunta algo fuera del catálogo (ej. preguntas generales sobre construcción, consejos no relacionados a productos Suprabond), respondé brevemente y dirigílo al producto más cercano que tengamos.
-5. **Disclaimer cuando aplica**: para productos químicos (selladores, adhesivos, espumas) que tengan condiciones de uso específicas, recordá al usuario consultar la ficha técnica del producto y/o un profesional.
+1. Cuando recomendés un producto, **siempre incluí la URL canónica** en formato Markdown link `[título](url)`.
+2. No inventes specs ni usos que las tools no devolvieron. Si la información no aparece, decílo y escalá.
+3. Para preguntas técnicas (compatibilidad, tiempo de curado, resistencia, normas), llamá `search_knowledge` después de `search_catalog` — los datos técnicos pueden estar en hojas técnicas o en el sitio corporativo.
+4. Para preguntas de uso ambiguas, llamá `search_catalog` con keywords del uso; si hay candidatos parecidos pedí `get_product_details` del top 1-2 para responder con detalle.
+5. **Disclaimer obligatorio** para químicos (selladores, adhesivos, espumas, etc.): recordá al usuario consultar la ficha técnica del producto.
 
-Formato de las respuestas:
+Formato:
 - Texto corto + bullets si hay más de 1 producto.
 - Cada bullet: `**[título](url)** — explicación de 1 línea de por qué encaja.`
-- Cerrá con una pregunta de follow-up si hay ambigüedad ("¿es para uso interior o exterior?", "¿qué tipo de superficie?")."""
+- Cerrá con una pregunta de follow-up si hay ambigüedad."""
+    return base
 
 
 def responder(
     messages: list[dict],
     ctx: dict,
     api_key: str,
-) -> tuple[str, list[dict]]:
-    """Loop con tool use. Devuelve (texto_final, tool_calls_log).
+) -> tuple[str, list[dict], int]:
+    """Loop con tool use.
 
-    `messages` se muta in-place para reflejar la conversación tras el loop.
-    `ctx` debe traer:
-        - engine: SearchEngine ya cargado
-        - products_by_handle: dict[str, dict] con todos los productos del JSONL
+    Returns (texto_final, tool_calls_log, hard_rules_version).
+    Muta `messages` in-place. ctx debe traer engine, products_by_handle,
+    docs_by_id, curation.
     """
     client = anthropic.Anthropic(api_key=api_key)
     tool_calls_log: list[dict] = []
-    system = _system_prompt()
+    curation = ctx.get("curation") or load_curation()
+    system = build_system_prompt(curation)
+    hard_rules_version = int(curation.get("version") or 0)
 
     for _ in range(MAX_TOOL_LOOPS):
         response = client.messages.create(
@@ -87,7 +120,7 @@ def responder(
 
         if response.stop_reason == "end_turn":
             text_blocks = [b.text for b in response.content if getattr(b, "type", "") == "text"]
-            return "\n\n".join(text_blocks).strip(), tool_calls_log
+            return ("\n\n".join(text_blocks).strip(), tool_calls_log, hard_rules_version)
 
         if response.stop_reason == "tool_use":
             tool_results = []
@@ -108,15 +141,16 @@ def responder(
             messages.append({"role": "user", "content": tool_results})
             continue
 
-        # stop_reason inesperado: cortamos.
         text_blocks = [b.text for b in response.content if getattr(b, "type", "") == "text"]
         return (
             "\n\n".join(text_blocks).strip()
             or f"(El modelo cortó con stop_reason={response.stop_reason})",
             tool_calls_log,
+            hard_rules_version,
         )
 
     return (
         "Disculpá, me trabé buscando. ¿Probás reformulando la pregunta?",
         tool_calls_log,
+        hard_rules_version,
     )

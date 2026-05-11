@@ -25,10 +25,26 @@ Thumbs.db
 data/*.jsonl
 data/*.json
 
-# Vector store (Fase 1.2). Tampoco comiteamos.
+# Vector store. Tampoco comiteamos.
 data/*.faiss
 data/*.npy
 data/*.pkl
+
+# SQLite local (logs de conversaciones + feedback). Es local a cada operador,
+# no se versiona. Los -shm/-wal son archivos transitorios de SQLite WAL mode.
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# PDFs subidos por operadores: binarios, idealmente persistidos en el disk del
+# server (Render) y no en git. Si querés versionar fichas técnicas oficiales,
+# moverlas a una carpeta específica como `data/pdfs-curados/`.
+data/pdfs/
+
+# EXCEPCIÓN al data/*.json de arriba: curation.json es config del producto
+# (hard rules + FAQs + contact). Sí va al repo para que cualquier clone
+# tenga las reglas iniciales.
+!data/curation.json
 
 # Secrets locales
 .env

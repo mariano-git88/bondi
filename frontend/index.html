@@ -251,10 +251,23 @@
   <script>
     // ============================================================
     // Configuración — apuntar al backend.
-    // En producción cambiar a la URL del Render: "https://bondi-api.onrender.com"
+    // Orden de prioridad:
+    //   1. window.BONDI_API_URL (inyectado por hosting o set manual en consola)
+    //   2. Same-origin /chat (cuando frontend y backend están en el mismo deploy)
+    //   3. Fallback localhost:8000 cuando el frontend se sirve desde file:// o :5000
     // ============================================================
-    const API_URL = "http://localhost:8000/chat";
+    const SESSION_KEY = "bondi_session_id";
     const STORAGE_KEY = "bondi_history";
+    const API_URL = (() => {
+      if (typeof window.BONDI_API_URL === "string" && window.BONDI_API_URL) {
+        return window.BONDI_API_URL;
+      }
+      const { protocol, host, port } = window.location;
+      if (protocol === "file:" || port === "5000" || host === "" || host.startsWith("localhost:5000")) {
+        return "http://localhost:8000/chat";
+      }
+      return `${protocol}//${host}/chat`;
+    })();
 
     const messagesEl = document.getElementById("messages");
     const emptyStateEl = document.getElementById("emptyState");
@@ -277,6 +290,7 @@
     function clearChat() {
       history = [];
       persistHistory();
+      localStorage.removeItem(SESSION_KEY);
       // Borrar todos los mensajes del DOM.
       [...messagesEl.querySelectorAll(".message")].forEach(n => n.remove());
       emptyStateEl.style.display = "";
@@ -375,16 +389,18 @@
       inputEl.disabled = true;
       appendTyping();
       try {
+        const sessionId = localStorage.getItem(SESSION_KEY) || crypto.randomUUID();
         const res = await fetch(API_URL, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, history })
+          body: JSON.stringify({ message, history, session_id: sessionId })
         });
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
         const data = await res.json();
         history = data.history;
+        if (data.session_id) localStorage.setItem(SESSION_KEY, data.session_id);
         persistHistory();
         removeTyping();
         appendMessage("assistant", data.response, true);

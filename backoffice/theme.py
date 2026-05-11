@@ -1,22 +1,24 @@
 """
-theme.py — Tema visual estilo Dieter Rams / Vitsoe.
+theme.py — Tema visual del Kitchen de Bondi.
 
-Inspiración: vitsoe.com y los principios de diseño de Dieter Rams
-("as little design as possible").
+Inspiración: el logo (gota amarilla con aura multicolor) + la tienda
+Suprabond (naranja CTA + blanco + sans-serif limpia). La estética
+busca:
 
-Decisiones:
-  - Paleta restringida: negro casi puro, blanco, grises, un solo acento
-    naranja-óxido usado con disciplina.
-  - Tipografía dominante: sans-serif del sistema, jerarquía clara,
-    letter-spacing apretado en headings.
-  - Sin border-radius (esquinas rectas), sin sombras (o casi).
-  - Bordes finísimos para separar contenido, en lugar de fondos.
-  - Whitespace generoso.
-  - Hide Streamlit chrome (menú hamburger, footer, toolbar) para que el
-    app se sienta como producto, no como demo de Streamlit.
-  - Logo de grupo Suprabond arriba en la sidebar (vía `st.logo()`).
+  - Calidez. Fondos warm-white (no blancos puros), grises oscuros
+    cálidos en vez de negro puro, amarillo del logo como hint
+    secundario.
+  - Profesionalismo. Tipografía dominante, jerarquía clara, métricas
+    grandes pero no estridentes.
+  - Identidad. Acentos del aura del logo (amarillo, naranja, rojo,
+    azul) usados con disciplina — solo en lo que el ojo necesita
+    seguir (CTA, tab activa, hover).
 
-Llamar `apply_theme()` UNA vez al principio de app.py, justo después de
+Coexistencia con el frontend chat (`frontend/index.html`): paleta
+compartida — los operadores ven el mismo lenguaje visual que los
+visitantes.
+
+Llamar `apply_theme()` UNA vez al inicio, después de
 `st.set_page_config()`.
 """
 
@@ -24,30 +26,38 @@ from pathlib import Path
 
 import streamlit as st
 
-# Path absoluto al logo. Usar Path(__file__).parent para que funcione
-# tanto local como en Streamlit Cloud, sin depender del cwd.
-# IMPORTANTE: el directorio en disco es `assets` (lowercase), no `Assets`.
-# Linux es case-sensitive, así que el case tiene que coincidir exacto con
-# lo que git tiene tracked, sino falla en Streamlit Cloud aunque funcione
-# en WSL/Windows (que son case-insensitive).
 LOGO_PATH = Path(__file__).parent.parent / "assets" / "logo.png"
 
-# ----- Paleta -----
-INK = "#1A1A1A"           # casi negro, texto principal
-TEXT_SOFT = "#767676"     # gris medio, texto secundario / labels
-LINE = "#E0E0E0"          # gris claro, divisores y bordes
-LINE_SOFT = "#FAFAFA"     # casi blanco, fondos sutiles (sidebar)
-ACCENT = "#C8552F"        # naranja-óxido tipo Vitsoe, usado con disciplina
-ACCENT_DARK = "#A8451F"   # variante más oscura para hovers/active
+# ----- Paleta brand -----
+YELLOW = "#FACA28"         # gota del logo
+YELLOW_SOFT = "#FFF4C9"    # fondo cálido sutil
+YELLOW_GLOW = "#FDE36B"
+ORANGE = "#C8552F"         # naranja Suprabond, CTA principal
+ORANGE_DARK = "#A8451F"
+ORANGE_SOFT = "#FFE5D5"
+CORAL = "#F87171"
+
+# Acentos del aura (uso muy puntual)
+AURA_RED = "#E63946"
+AURA_BLUE = "#2563EB"
+AURA_GREEN = "#16A34A"
+
+# Neutros cálidos
+INK = "#2A2422"            # casi negro pero cálido
+INK_SOFT = "#4D4540"
+TEXT_SOFT = "#8B7E73"
+LINE = "#EFE6D8"
+LINE_STRONG = "#D9CDB8"
+LINE_SOFTBG = "#FFFAF0"    # warm white
 WHITE = "#FFFFFF"
+
 
 CUSTOM_CSS = f"""
 <style>
 /* ==============================================================
-   Dieter Rams / Vitsoe theme — Gestión de Vendedores GSU
+   Bondi — Kitchen theme (warm + brand-aligned)
    ============================================================== */
 
-/* ----- Tipografía global ----- */
 html, body, [data-testid="stAppViewContainer"], [class*="css"] {{
     font-family: -apple-system, BlinkMacSystemFont, "Inter", "Helvetica Neue",
                  Helvetica, Arial, sans-serif;
@@ -56,18 +66,22 @@ html, body, [data-testid="stAppViewContainer"], [class*="css"] {{
     -moz-osx-font-smoothing: grayscale;
 }}
 
-/* ----- Headings: tipografía como elemento dominante ----- */
+[data-testid="stAppViewContainer"] {{
+    background-color: {LINE_SOFTBG};
+}}
+
+/* ----- Headings ----- */
 h1 {{
     color: {INK} !important;
-    font-weight: 600 !important;
-    font-size: 2.1rem !important;
+    font-weight: 700 !important;
+    font-size: 2.2rem !important;
     letter-spacing: -0.025em !important;
     line-height: 1.15 !important;
     margin: 0 0 0.5rem 0 !important;
 }}
 h2 {{
     color: {INK} !important;
-    font-weight: 500 !important;
+    font-weight: 600 !important;
     font-size: 1.45rem !important;
     letter-spacing: -0.015em !important;
     line-height: 1.25 !important;
@@ -77,31 +91,25 @@ h2 {{
 }}
 h3 {{
     color: {INK} !important;
-    font-weight: 500 !important;
+    font-weight: 600 !important;
     font-size: 1.05rem !important;
     letter-spacing: -0.005em !important;
     margin: 1.75rem 0 0.85rem 0 !important;
 }}
-
 p, div, span, li {{
     line-height: 1.6;
 }}
 
-/* ----- Logo en la sidebar (st.logo) ----- */
-/* max-height 280px = 5x el default (56px). max-width 100% evita que
-   el logo se salga de la sidebar si la imagen es más ancha que alta. */
+/* ----- Logo en sidebar ----- */
 [data-testid="stLogo"] img,
 [data-testid="stSidebarHeader"] img {{
-    max-height: 280px !important;
+    max-height: 220px !important;
     max-width: 100% !important;
     width: auto !important;
     height: auto !important;
-    margin: 0.5rem 0 1rem 0 !important;
+    margin: 0.75rem auto 1rem auto !important;
+    display: block !important;
 }}
-
-/* El contenedor del logo (stSidebarHeader y stLogo) tiene una altura
-   fija heredada de Streamlit — hay que destrabarla para que el logo
-   grande no se clippee por arriba. */
 [data-testid="stSidebarHeader"],
 [data-testid="stLogo"],
 [data-testid="stSidebarHeader"] > div,
@@ -114,9 +122,9 @@ p, div, span, li {{
     padding-bottom: 0.5rem !important;
 }}
 
-/* ----- Sidebar: limpio, casi blanco ----- */
+/* ----- Sidebar warm ----- */
 [data-testid="stSidebar"] {{
-    background-color: {LINE_SOFT};
+    background-color: {WHITE};
     border-right: 1px solid {LINE};
 }}
 [data-testid="stSidebar"] h2 {{
@@ -128,124 +136,138 @@ p, div, span, li {{
     color: {TEXT_SOFT} !important;
     margin-top: 1.75rem !important;
     margin-bottom: 0.75rem !important;
-    font-weight: 500 !important;
+    font-weight: 600 !important;
 }}
 [data-testid="stSidebar"] h1 {{
-    font-size: 1.3rem !important;
-    margin-bottom: 1rem !important;
+    font-size: 1.4rem !important;
+    margin-bottom: 0.25rem !important;
+    color: {INK} !important;
+}}
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {{
+    color: {TEXT_SOFT};
+    font-size: 0.82rem;
 }}
 
-/* ----- Botones: planos, sin radius, hover acento ----- */
+/* ----- Botones: naranja Suprabond CTA con redondeo cálido ----- */
 .stButton > button,
 .stDownloadButton > button,
 [data-testid="stFormSubmitButton"] > button {{
-    background-color: {INK};
+    background-color: {ORANGE};
     color: {WHITE};
-    border: 1px solid {INK};
-    border-radius: 0;
-    padding: 0.7rem 1.6rem;
-    font-weight: 500;
+    border: none;
+    border-radius: 10px;
+    padding: 0.65rem 1.4rem;
+    font-weight: 600;
     font-size: 0.92rem;
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-    transition: background-color 0.18s ease, border-color 0.18s ease;
-    box-shadow: none;
+    letter-spacing: 0.01em;
+    transition: background-color 0.18s ease, transform 0.1s ease, box-shadow 0.18s ease;
+    box-shadow: 0 1px 3px rgba(200, 85, 47, 0.25);
 }}
 .stButton > button:hover,
 .stDownloadButton > button:hover,
 [data-testid="stFormSubmitButton"] > button:hover {{
-    background-color: {ACCENT};
-    border-color: {ACCENT};
+    background-color: {ORANGE_DARK};
     color: {WHITE};
-    transform: none;
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(200, 85, 47, 0.32);
 }}
 .stButton > button:active,
 .stDownloadButton > button:active,
 [data-testid="stFormSubmitButton"] > button:active {{
-    background-color: {ACCENT_DARK};
-    border-color: {ACCENT_DARK};
+    transform: translateY(0);
+}}
+/* Botón secondary (cuando no es primary) — usar bordes warm */
+.stButton > button[kind="secondary"] {{
+    background-color: {WHITE};
+    color: {INK};
+    border: 1.5px solid {LINE_STRONG};
+    box-shadow: none;
+}}
+.stButton > button[kind="secondary"]:hover {{
+    background-color: {YELLOW_SOFT};
+    border-color: {YELLOW};
+    color: {INK};
+    box-shadow: 0 2px 6px rgba(250, 202, 40, 0.18);
 }}
 
-/* ----- File uploaders: borde fino, sin fill ----- */
+/* ----- File uploader: borde redondeado warm ----- */
 [data-testid="stFileUploader"] section {{
-    border: 1px solid {LINE} !important;
-    border-radius: 0 !important;
+    border: 1.5px dashed {LINE_STRONG} !important;
+    border-radius: 12px !important;
     background-color: {WHITE} !important;
-    padding: 1.1rem !important;
-    transition: border-color 0.18s ease;
+    padding: 1.2rem !important;
+    transition: border-color 0.18s ease, background-color 0.18s ease;
 }}
 [data-testid="stFileUploader"] section:hover {{
-    border-color: {INK} !important;
-    background-color: {WHITE} !important;
+    border-color: {ORANGE} !important;
+    background-color: {ORANGE_SOFT} !important;
 }}
 [data-testid="stFileUploader"] small {{
     color: {TEXT_SOFT};
-    font-size: 0.78rem;
+    font-size: 0.8rem;
 }}
 [data-testid="stFileUploader"] label {{
-    font-size: 0.82rem !important;
-    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    font-weight: 600 !important;
     color: {INK} !important;
 }}
 
-/* ----- Inputs de texto: línea inferior estilo formulario clásico ----- */
+/* ----- Inputs: bordes redondeados con focus naranja ----- */
 .stTextInput input,
 .stNumberInput input,
 .stTextArea textarea {{
-    border-radius: 0 !important;
-    border: 1px solid {LINE} !important;
-    border-bottom-width: 2px !important;
-    padding: 0.7rem 0.85rem !important;
+    border-radius: 10px !important;
+    border: 1.5px solid {LINE} !important;
+    padding: 0.65rem 0.9rem !important;
     font-size: 0.95rem !important;
     background-color: {WHITE} !important;
-    transition: border-color 0.15s ease;
+    color: {INK} !important;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }}
 .stTextInput input:focus,
 .stNumberInput input:focus,
 .stTextArea textarea:focus {{
-    border-color: {INK} !important;
-    border-bottom-color: {ACCENT} !important;
-    box-shadow: none !important;
+    border-color: {ORANGE} !important;
+    box-shadow: 0 0 0 3px rgba(200, 85, 47, 0.12) !important;
     outline: none !important;
 }}
 
-/* ----- Métricas: sin card, solo tipografía ----- */
+/* ----- Metrics: tipografía dominante + delta cálido ----- */
 [data-testid="stMetric"] {{
-    background-color: transparent;
-    border: none;
-    border-top: 1px solid {LINE};
-    border-radius: 0;
-    padding: 1.1rem 0 0.5rem 0;
-    box-shadow: none;
+    background-color: {WHITE};
+    border: 1px solid {LINE};
+    border-radius: 12px;
+    padding: 1rem 1.2rem;
+    box-shadow: 0 1px 2px rgba(42, 36, 34, 0.04);
 }}
 [data-testid="stMetricValue"] {{
     color: {INK} !important;
-    font-weight: 600 !important;
-    font-size: 2.4rem !important;
+    font-weight: 700 !important;
+    font-size: 2.1rem !important;
     letter-spacing: -0.02em !important;
     line-height: 1.1 !important;
 }}
 [data-testid="stMetricLabel"] {{
     color: {TEXT_SOFT} !important;
-    font-weight: 500 !important;
+    font-weight: 600 !important;
     text-transform: uppercase;
-    letter-spacing: 0.10em;
-    font-size: 0.74rem !important;
+    letter-spacing: 0.08em;
+    font-size: 0.72rem !important;
 }}
 [data-testid="stMetricDelta"] {{
-    color: {TEXT_SOFT} !important;
-    font-weight: 500 !important;
+    color: {ORANGE} !important;
+    font-weight: 600 !important;
 }}
 
-/* ----- Dataframes: bordes finos, sin radius ----- */
+/* ----- Dataframes ----- */
 [data-testid="stDataFrame"] {{
-    border-radius: 0 !important;
+    border-radius: 12px !important;
     border: 1px solid {LINE} !important;
-    box-shadow: none !important;
+    box-shadow: 0 1px 2px rgba(42, 36, 34, 0.04) !important;
+    overflow: hidden;
 }}
 
-/* ----- Tabs: cada tab como pill clickeable, activa muy visible,
-   todas el mismo tamaño y distribuidas uniformemente. ----- */
+/* ----- Tabs: pill activa amarilla + borde inferior naranja ----- */
 [data-testid="stTabs"] {{
     border-bottom: 1px solid {LINE};
     margin-bottom: 1.5rem;
@@ -256,15 +278,15 @@ p, div, span, li {{
     gap: 4px;
 }}
 [data-testid="stTabs"] button[role="tab"] {{
-    flex: 1 1 0 !important;          /* todas el mismo tamaño, evenly spaced */
+    flex: 1 1 0 !important;
     min-width: 0 !important;
-    padding: 0.55rem 0.6rem !important;
-    background-color: #F5F5F5 !important;
-    border-radius: 6px 6px 0 0 !important;
+    padding: 0.6rem 0.7rem !important;
+    background-color: {WHITE} !important;
+    border-radius: 10px 10px 0 0 !important;
     color: {TEXT_SOFT} !important;
     font-weight: 500 !important;
     font-size: 0.92rem !important;
-    letter-spacing: 0.02em;
+    letter-spacing: 0.01em;
     border: none !important;
     border-bottom: 3px solid transparent !important;
     margin-bottom: -1px;
@@ -274,29 +296,29 @@ p, div, span, li {{
 }}
 [data-testid="stTabs"] button[role="tab"]:hover {{
     color: {INK} !important;
-    background-color: #EBEBEB !important;
+    background-color: {YELLOW_SOFT} !important;
 }}
 [data-testid="stTabs"] button[role="tab"][aria-selected="true"] {{
     color: {INK} !important;
-    background-color: rgba(200, 85, 47, 0.12) !important;
-    border-bottom: 3px solid {ACCENT} !important;
+    background-color: {YELLOW_SOFT} !important;
+    border-bottom: 3px solid {ORANGE} !important;
     font-weight: 700 !important;
 }}
 
-/* ----- Form (login): card mínima ----- */
+/* ----- Forms (login card) ----- */
 [data-testid="stForm"] {{
     background-color: {WHITE};
     border: 1px solid {LINE};
-    border-radius: 0;
-    padding: 2.25rem 2rem;
-    box-shadow: none;
+    border-radius: 14px;
+    padding: 2rem;
+    box-shadow: 0 2px 6px rgba(42, 36, 34, 0.04);
 }}
 
-/* ----- Alertas: bordes finos, sin radius, accent en error ----- */
+/* ----- Alertas: bordes finos con redondeo warm ----- */
 [data-testid="stAlert"] {{
-    border-radius: 0 !important;
+    border-radius: 10px !important;
     border: 1px solid {LINE} !important;
-    border-left-width: 3px !important;
+    border-left-width: 4px !important;
     box-shadow: none !important;
     padding: 0.85rem 1.1rem !important;
     background-color: {WHITE} !important;
@@ -305,53 +327,63 @@ p, div, span, li {{
     background-color: {WHITE} !important;
 }}
 
-/* ----- Captions: discretas ----- */
+/* ----- Captions ----- */
 [data-testid="stCaptionContainer"], .stCaption {{
     color: {TEXT_SOFT};
-    font-size: 0.84rem;
+    font-size: 0.85rem;
     line-height: 1.55;
 }}
 
-/* ----- Expanders: bordes finos, header limpio ----- */
+/* ----- Expanders: bordes warm con redondeo ----- */
 [data-testid="stExpander"] {{
     border: 1px solid {LINE} !important;
-    border-radius: 0 !important;
+    border-radius: 12px !important;
     background-color: {WHITE} !important;
     box-shadow: none !important;
+    overflow: hidden;
 }}
 [data-testid="stExpander"] summary {{
-    padding: 0.85rem 1.1rem !important;
-    font-weight: 500 !important;
+    padding: 0.9rem 1.1rem !important;
+    font-weight: 600 !important;
     font-size: 0.92rem !important;
     background-color: transparent !important;
 }}
 [data-testid="stExpander"] summary:hover {{
-    background-color: {LINE_SOFT} !important;
+    background-color: {YELLOW_SOFT} !important;
 }}
 
-/* ----- Radio buttons: planos ----- */
-.stRadio > div {{
-    gap: 1rem !important;
-}}
-.stRadio label {{
-    font-size: 0.9rem !important;
-    color: {INK} !important;
-}}
+/* ----- Radio / Checkbox ----- */
+.stRadio > div {{ gap: 1rem !important; }}
+.stRadio label {{ font-size: 0.9rem !important; color: {INK} !important; }}
 
-/* ----- Selectbox: bordes rectos ----- */
+/* ----- Selectbox ----- */
 .stSelectbox div[data-baseweb="select"] > div {{
-    border-radius: 0 !important;
-    border: 1px solid {LINE} !important;
+    border-radius: 10px !important;
+    border: 1.5px solid {LINE} !important;
     background-color: {WHITE} !important;
 }}
 .stSelectbox div[data-baseweb="select"]:hover > div {{
-    border-color: {INK} !important;
+    border-color: {ORANGE} !important;
 }}
 
-/* ----- Divider más sutil ----- */
+/* ----- Slider: track naranja ----- */
+.stSlider [data-baseweb="slider"] [role="slider"] {{
+    background-color: {ORANGE} !important;
+    border: 2px solid {WHITE} !important;
+    box-shadow: 0 1px 3px rgba(200, 85, 47, 0.3) !important;
+}}
+
+/* ----- Divider ----- */
 hr {{
     border-color: {LINE} !important;
     margin: 2rem 0 !important;
+}}
+
+/* ----- Code blocks: fondo warm sutil ----- */
+.stCode, pre {{
+    background-color: {LINE_SOFTBG} !important;
+    border: 1px solid {LINE} !important;
+    border-radius: 10px !important;
 }}
 
 /* ----- Hide Streamlit chrome ----- */
@@ -361,39 +393,29 @@ footer {{ visibility: hidden; }}
 header [data-testid="stDecoration"] {{ display: none; }}
 header {{ background-color: transparent !important; }}
 
-/* ----- Container principal: whitespace generoso, max-width ----- */
+/* ----- Container principal ----- */
 [data-testid="stAppViewContainer"] > .main > .block-container {{
-    padding-top: 3rem !important;
+    padding-top: 2.5rem !important;
     padding-bottom: 5rem !important;
     padding-left: 3rem !important;
     padding-right: 3rem !important;
-    max-width: 1200px;
+    max-width: 1240px;
+    background-color: {LINE_SOFTBG};
 }}
 
-/* Texto fuerte (strong, b) un pelín más oscuro */
-strong, b {{
-    font-weight: 600;
-    color: {INK};
+/* Texto fuerte un pelín más oscuro */
+strong, b {{ font-weight: 600; color: {INK}; }}
+
+/* Spinner: usar naranja en vez del rosa default */
+.stSpinner > div > div {{
+    border-top-color: {ORANGE} !important;
 }}
 </style>
 """
 
 
 def apply_theme() -> None:
-    """
-    Aplica el theme visual al app de Streamlit.
-
-    Llamar UNA SOLA vez al principio de app.py, después de
-    `st.set_page_config()` y antes de cualquier otro elemento. Hace dos
-    cosas:
-
-      1. Inyecta CSS custom que estiliza todos los componentes nativos
-         de Streamlit según los principios de Dieter Rams / Vitsoe.
-      2. Si existe `Assets/logo.png`, lo registra con `st.logo()` para
-         que aparezca arriba a la izquierda en la sidebar.
-
-    Si el archivo del logo no existe, sigue funcionando sin él (no rompe).
-    """
+    """Aplicar el theme al app Streamlit. Llamar UNA vez al inicio."""
     if LOGO_PATH.exists():
         st.logo(str(LOGO_PATH))
     st.markdown(CUSTOM_CSS, unsafe_allow_html=True)

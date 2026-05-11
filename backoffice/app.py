@@ -1,65 +1,59 @@
 """
 app.py — Backoffice Streamlit de Bondi (kitchen).
 
+Cliente HTTP del backend. NO toca filesystem propio: cada read/write
+(curation, PDFs, ingest, rebuild, conversaciones, feedback) va por
+endpoints `/admin/*` del backend FastAPI. Eso permite deployar este app
+en admin.suprabond.ai mientras el backend vive en bondi.suprabond.ai y
+que ambos compartan estado.
+
 Tabs:
   📊 Resumen        — stats globales + estado del backend
   💬 Conversaciones — log de chats + feedback (good/bad/flag)
-  📋 FAQs           — CRUD de FAQs que entran al RAG
+  📋 FAQs           — CRUD de FAQs (entran al RAG)
   ⚖️ Reglas         — Hard Rules inquebrantables del system prompt
   📄 PDFs           — upload + re-ingestion
   🌐 Web            — crawler del sitio corporativo
   🔧 Index          — rebuild + reload backend
   ❤️ Salud          — archivos del corpus + healthcheck + db stats
 
-Auth: password en sidebar contra env BONDI_ADMIN_PASS (default 'admin').
+Auth: password contra env BONDI_ADMIN_PASS. La password se envía al
+backend como header `X-Admin-Token` en cada call.
 
-Tema visual: estilo Vitsoe/Dieter Rams (theme.py) — sin border-radius,
-bordes finos, acento naranja-óxido #C8552F.
+Tema visual: Vitsoe/Dieter Rams (theme.py).
 
-Tutorial: modal con @st.dialog, botón en el header.
+Tutorial: modal con @st.dialog (tutorial.py).
 
 Run:
     cd bondi
-    export BONDI_ADMIN_PASS=tu-password
-    export OPENAI_API_KEY=sk-...        # para rebuilds
+    export BONDI_ADMIN_PASS=...
+    export BONDI_BACKEND_URL=https://bondi.suprabond.ai
     streamlit run backoffice/app.py
 """
 
 from __future__ import annotations
 
-import json
 import os
-import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
+import httpx
 import pandas as pd
 import streamlit as st
 
-# Asegurar imports de backend.* funcionen cuando se corre con streamlit run.
-ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT))
+# Asegurar que `theme.py` y `tutorial.py` (locales a este package) se importen.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from backend import db  # noqa: E402
-
-import theme  # noqa: E402  (local al package backoffice)
+import theme  # noqa: E402
 import tutorial  # noqa: E402
-
-CURATION_PATH = ROOT / "data" / "curation.json"
-PDFS_DIR = ROOT / "data" / "pdfs"
-DOCS_PDFS_JSONL = ROOT / "data" / "docs_pdfs.jsonl"
-DOCS_WEB_JSONL = ROOT / "data" / "docs_web.jsonl"
-PRODUCTS_JSONL = ROOT / "data" / "products.jsonl"
-INDEX_PATH = ROOT / "data" / "products.faiss"
-META_PATH = ROOT / "data" / "products_metadata.pkl"
 
 BACKEND_URL_DEFAULT = os.environ.get("BONDI_BACKEND_URL", "http://localhost:8000")
 
 
 # =====================================================================
-# Page config + theme — DEBE ir antes de cualquier otro elemento
+# Page config + theme
 # =====================================================================
 
 st.set_page_config(
@@ -68,63 +62,106 @@ st.set_page_config(
     layout="wide",
 )
 theme.apply_theme()
-db.init_db()
 
 
 # =====================================================================
-# Helpers
+# HTTP client al backend
 # =====================================================================
 
-def load_curation() -> dict:
-    if not CURATION_PATH.exists():
-        return {"version": 1, "hard_rules": [], "faqs": [], "disclaimers": {}, "contact": {}}
-    return json.loads(CURATION_PATH.read_text(encoding="utf-8"))
+def _headers(token: str) -> dict:
+    return {"X-Admin-Token": token, "Accept": "application/json"}
 
 
-def save_curation(data: dict) -> None:
-    data["version"] = int(data.get("version") or 0) + 1
-    data["updated_at"] = datetime.now(timezone.utc).isoformat()
-    CURATION_PATH.write_text(
-        json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def run_cmd(cmd: list[str], env_extra: dict | None = None) -> tuple[int, str, str]:
-    env = os.environ.copy()
-    if env_extra:
-        env.update(env_extra)
-    proc = subprocess.run(cmd, cwd=str(ROOT), env=env, capture_output=True, text=True)
-    return proc.returncode, proc.stdout, proc.stderr
-
-
-def call_backend_reload(backend_url: str, admin_token: str) -> tuple[bool, str]:
+def api_get(backend_url: str, token: str, path: str, timeout: float = 10.0) -> tuple[bool, dict | str]:
     try:
-        import httpx
+        r = httpx.get(f"{backend_url.rstrip('/')}{path}", headers=_headers(token), timeout=timeout)
+        if r.status_code == 200:
+            try:
+                return True, r.json()
+            except Exception:
+                return True, r.text
+        return False, f"HTTP {r.status_code}: {r.text[:300]}"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def api_post(
+    backend_url: str,
+    token: str,
+    path: str,
+    json: dict | None = None,
+    timeout: float = 30.0,
+) -> tuple[bool, dict | str]:
+    try:
         r = httpx.post(
-            f"{backend_url.rstrip('/')}/admin/reload",
-            headers={"X-Admin-Token": admin_token},
-            timeout=30,
+            f"{backend_url.rstrip('/')}{path}",
+            headers=_headers(token),
+            json=json,
+            timeout=timeout,
         )
         if r.status_code == 200:
-            return True, r.text
-        return False, f"HTTP {r.status_code}: {r.text}"
+            try:
+                return True, r.json()
+            except Exception:
+                return True, r.text
+        return False, f"HTTP {r.status_code}: {r.text[:500]}"
     except Exception as exc:
-        return False, str(exc)
+        return False, f"{type(exc).__name__}: {exc}"
 
 
-def file_status(p: Path) -> tuple[str, str]:
-    """Devuelve (status_emoji_label, detalle)."""
-    if not p.exists():
-        return "❌ no existe", ""
-    size = p.stat().st_size
-    mtime = datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
-    if size < 1024:
-        s = f"{size} B"
-    elif size < 1024 * 1024:
-        s = f"{size / 1024:.1f} KB"
-    else:
-        s = f"{size / (1024 * 1024):.1f} MB"
-    return f"✅ {s}", mtime
+def api_post_multipart(
+    backend_url: str,
+    token: str,
+    path: str,
+    files: dict,
+    data: dict | None = None,
+    timeout: float = 60.0,
+) -> tuple[bool, dict | str]:
+    try:
+        r = httpx.post(
+            f"{backend_url.rstrip('/')}{path}",
+            headers={"X-Admin-Token": token},
+            files=files,
+            data=data or {},
+            timeout=timeout,
+        )
+        if r.status_code == 200:
+            try:
+                return True, r.json()
+            except Exception:
+                return True, r.text
+        return False, f"HTTP {r.status_code}: {r.text[:500]}"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def api_delete(backend_url: str, token: str, path: str, timeout: float = 10.0) -> tuple[bool, dict | str]:
+    try:
+        r = httpx.delete(f"{backend_url.rstrip('/')}{path}", headers=_headers(token), timeout=timeout)
+        if r.status_code == 200:
+            return True, r.json()
+        return False, f"HTTP {r.status_code}: {r.text[:300]}"
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+def fmt_size(n: int) -> str:
+    if n is None:
+        return "—"
+    if n < 1024:
+        return f"{n} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / (1024 * 1024):.1f} MB"
+
+
+def fmt_ts(iso: str | None) -> str:
+    if not iso:
+        return "—"
+    try:
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return iso
 
 
 # =====================================================================
@@ -137,37 +174,31 @@ def _show_tutorial_dialog():
 
 
 # =====================================================================
-# Auth gate
-# =====================================================================
-
-def check_auth() -> bool:
-    expected = os.environ.get("BONDI_ADMIN_PASS") or "admin"
-    if expected == "admin":
-        st.sidebar.warning("⚠️ BONDI_ADMIN_PASS no configurado — usando default 'admin'.")
-    pwd = st.sidebar.text_input("Password", type="password", key="auth_pwd")
-    if not pwd:
-        st.sidebar.info("Ingresá la password para acceder.")
-        return False
-    if pwd != expected:
-        st.sidebar.error("Password incorrecta.")
-        return False
-    st.sidebar.success("Autenticado")
-    return True
-
-
-# =====================================================================
-# Sidebar
+# Auth gate (password compartida con el backend via X-Admin-Token)
 # =====================================================================
 
 st.sidebar.title("Kitchen")
 st.sidebar.caption("Backoffice operativo de Bondi")
 
-if not check_auth():
+backend_url = st.sidebar.text_input("Backend URL", value=BACKEND_URL_DEFAULT)
+pwd = st.sidebar.text_input("Password (BONDI_ADMIN_PASS)", type="password", key="auth_pwd")
+
+if not pwd:
+    st.sidebar.info("Ingresá la password para acceder.")
     st.stop()
 
+# Probar la password contra un endpoint admin barato.
+ok_auth, auth_msg = api_get(backend_url, pwd, "/admin/db/stats", timeout=8.0)
+if not ok_auth:
+    if isinstance(auth_msg, str) and "401" in auth_msg:
+        st.sidebar.error("Password incorrecta.")
+    else:
+        st.sidebar.error(f"No pude hablar con el backend: {auth_msg}")
+    st.stop()
+
+admin_token = pwd
+st.sidebar.success("Autenticado")
 operator = st.sidebar.text_input("Operador (para feedback)", value="anon")
-backend_url = st.sidebar.text_input("Backend URL", value=BACKEND_URL_DEFAULT)
-admin_token = os.environ.get("BONDI_ADMIN_PASS") or "admin"
 
 
 # =====================================================================
@@ -178,7 +209,7 @@ _col_title, _col_btn = st.columns([5, 1], vertical_alignment="center")
 with _col_title:
     st.title("Kitchen — Bondi")
     st.caption(
-        "Editá hard rules, FAQs, subí hojas técnicas y revisá conversaciones reales. "
+        f"Backend: `{backend_url}` · Editá hard rules, FAQs, PDFs y revisá conversaciones reales. "
         "Si es tu primera vez, abrí el tutorial."
     )
 with _col_btn:
@@ -205,26 +236,31 @@ tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_salu
 # ---------- Resumen ----------
 with tab_dash:
     st.header("Resumen")
-    s = db.stats()
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Turns", s["turns"])
-    col2.metric("Sesiones", s["sessions"])
-    col3.metric("👍 Good", s["feedback_good"])
-    col4.metric("👎 Bad", s["feedback_bad"])
+    ok, stats = api_get(backend_url, admin_token, "/admin/db/stats")
+    if ok and isinstance(stats, dict):
+        col1, col2, col3, col4 = st.columns(4)
+        col1.metric("Turns", stats.get("turns", 0))
+        col2.metric("Sesiones", stats.get("sessions", 0))
+        col3.metric("👍 Good", stats.get("feedback_good", 0))
+        col4.metric("👎 Bad", stats.get("feedback_bad", 0))
+    else:
+        st.warning(f"No pude leer stats: {stats}")
 
-    cur = load_curation()
-    st.markdown("### Curaduría")
-    cc1, cc2, cc3 = st.columns(3)
-    cc1.metric("Hard rules", len(cur.get("hard_rules") or []))
-    cc2.metric("FAQs", len(cur.get("faqs") or []))
-    cc3.metric("Versión", cur.get("version") or 0)
+    ok_cur, cur = api_get(backend_url, admin_token, "/admin/curation")
+    if ok_cur and isinstance(cur, dict):
+        st.markdown("### Curaduría")
+        cc1, cc2, cc3 = st.columns(3)
+        cc1.metric("Hard rules", len(cur.get("hard_rules") or []))
+        cc2.metric("FAQs", len(cur.get("faqs") or []))
+        cc3.metric("Versión", cur.get("version") or 0)
 
 
 # ---------- Conversaciones ----------
 with tab_chats:
     st.header("Conversaciones")
     limit = st.slider("Cantidad a mostrar", 10, 500, 50, 10)
-    rows = db.list_recent_turns(limit=limit)
+    ok, payload = api_get(backend_url, admin_token, f"/admin/turns?limit={limit}")
+    rows = payload.get("turns", []) if (ok and isinstance(payload, dict)) else []
     if not rows:
         st.info("Todavía no hay conversaciones registradas.")
     else:
@@ -244,9 +280,9 @@ with tab_chats:
         st.divider()
         sel = st.number_input("Ver detalle de turn_id", min_value=0, step=1, value=0)
         if sel and sel > 0:
-            t = db.get_turn(int(sel))
-            if not t:
-                st.error("No existe ese turn_id.")
+            ok_t, t = api_get(backend_url, admin_token, f"/admin/turn/{int(sel)}")
+            if not ok_t:
+                st.error(f"No existe ese turn_id ({t})")
             else:
                 st.markdown(f"**Sesión**: `{t['session_id']}`  |  **Timestamp**: `{t['ts']}`")
                 st.markdown("#### 👤 User")
@@ -254,7 +290,8 @@ with tab_chats:
                 st.markdown("#### 🤖 Assistant")
                 st.code(t["assistant_msg"], language="markdown")
 
-                tool_calls = json.loads(t["tool_calls_json"] or "[]")
+                import json as _json
+                tool_calls = _json.loads(t.get("tool_calls_json") or "[]")
                 if tool_calls:
                     with st.expander(f"🔧 Tool calls ({len(tool_calls)})"):
                         st.json(tool_calls)
@@ -263,20 +300,25 @@ with tab_chats:
                 fb_col1, fb_col2, fb_col3 = st.columns(3)
                 with fb_col1:
                     if st.button("👍 Good", key=f"good_{sel}"):
-                        db.save_feedback(int(sel), "good", operator=operator)
+                        api_post(backend_url, admin_token, "/admin/feedback",
+                                 json={"turn_id": int(sel), "rating": "good", "operator": operator})
                         st.success("Guardado 👍")
                 with fb_col2:
                     if st.button("👎 Bad", key=f"bad_{sel}"):
-                        db.save_feedback(int(sel), "bad", operator=operator)
+                        api_post(backend_url, admin_token, "/admin/feedback",
+                                 json={"turn_id": int(sel), "rating": "bad", "operator": operator})
                         st.success("Guardado 👎")
                 with fb_col3:
                     if st.button("🚩 Flag", key=f"flag_{sel}"):
-                        db.save_feedback(int(sel), "flag", operator=operator)
+                        api_post(backend_url, admin_token, "/admin/feedback",
+                                 json={"turn_id": int(sel), "rating": "flag", "operator": operator})
                         st.success("Flag agregado 🚩")
 
                 note = st.text_area("Nota (opcional)", key=f"note_{sel}", height=100)
                 if st.button("Guardar nota", key=f"savenote_{sel}") and note.strip():
-                    db.save_feedback(int(sel), "flag", note=note.strip(), operator=operator)
+                    api_post(backend_url, admin_token, "/admin/feedback",
+                             json={"turn_id": int(sel), "rating": "flag",
+                                   "note": note.strip(), "operator": operator})
                     st.success("Nota guardada.")
 
                 if t.get("feedback"):
@@ -287,224 +329,252 @@ with tab_chats:
 # ---------- FAQs ----------
 with tab_faqs:
     st.header("Curaduría — FAQs")
-    st.caption("Las FAQs se indexan junto con productos. El agent las consulta vía search_knowledge. "
-               "Recordá que cualquier edición acá requiere Rebuild Index + Reload Backend para impactar al chat.")
-    cur = load_curation()
-    faqs = cur.get("faqs") or []
-    df = pd.DataFrame(faqs) if faqs else pd.DataFrame(columns=["id", "question", "answer", "tags"])
-    if "tags" in df.columns:
-        df["tags"] = df["tags"].apply(lambda t: ", ".join(t) if isinstance(t, list) else (t or ""))
+    st.caption("Cambios acá requieren Rebuild Index + Reload Backend para impactar al chat (no es hot-reload).")
 
-    edited = st.data_editor(
-        df,
-        num_rows="dynamic",
-        use_container_width=True,
-        column_config={
-            "id": st.column_config.TextColumn("id", required=False),
-            "question": st.column_config.TextColumn("Pregunta", width="medium", required=True),
-            "answer": st.column_config.TextColumn("Respuesta", width="large", required=True),
-            "tags": st.column_config.TextColumn("Tags (CSV)"),
-        },
-        key="faqs_editor",
-    )
+    ok, cur = api_get(backend_url, admin_token, "/admin/curation")
+    if not ok or not isinstance(cur, dict):
+        st.error(f"No pude leer curation: {cur}")
+    else:
+        faqs = cur.get("faqs") or []
+        df = pd.DataFrame(faqs) if faqs else pd.DataFrame(columns=["id", "question", "answer", "tags"])
+        if "tags" in df.columns:
+            df["tags"] = df["tags"].apply(lambda t: ", ".join(t) if isinstance(t, list) else (t or ""))
 
-    if st.button("💾 Guardar FAQs", type="primary"):
-        new_faqs = []
-        for i, row in edited.iterrows():
-            q = (row.get("question") or "").strip()
-            a = (row.get("answer") or "").strip()
-            if not q or not a:
-                continue
-            tags_raw = row.get("tags") or ""
-            tags = [t.strip() for t in str(tags_raw).split(",") if t.strip()]
-            fid = (row.get("id") or "").strip() or f"faq-{int(time.time())}-{i}"
-            new_faqs.append({"id": fid, "question": q, "answer": a, "tags": tags})
-        cur["faqs"] = new_faqs
-        save_curation(cur)
-        st.success(f"Guardadas {len(new_faqs)} FAQs (curation.json versión {cur['version']}).")
-        st.info("Hacé **Rebuild Index** + **Reload Backend** desde 🔧 Index para que el agent las vea.")
+        edited = st.data_editor(
+            df,
+            num_rows="dynamic",
+            use_container_width=True,
+            column_config={
+                "id": st.column_config.TextColumn("id", required=False),
+                "question": st.column_config.TextColumn("Pregunta", width="medium", required=True),
+                "answer": st.column_config.TextColumn("Respuesta", width="large", required=True),
+                "tags": st.column_config.TextColumn("Tags (CSV)"),
+            },
+            key="faqs_editor",
+        )
+
+        if st.button("💾 Guardar FAQs", type="primary"):
+            new_faqs = []
+            for i, row in edited.iterrows():
+                q = (row.get("question") or "").strip()
+                a = (row.get("answer") or "").strip()
+                if not q or not a:
+                    continue
+                tags_raw = row.get("tags") or ""
+                tags = [t.strip() for t in str(tags_raw).split(",") if t.strip()]
+                fid = (row.get("id") or "").strip() or f"faq-{int(time.time())}-{i}"
+                new_faqs.append({"id": fid, "question": q, "answer": a, "tags": tags})
+            cur["faqs"] = new_faqs
+            ok_save, msg = api_post(backend_url, admin_token, "/admin/curation", json=cur)
+            if ok_save:
+                v = msg.get("version") if isinstance(msg, dict) else "?"
+                st.success(f"Guardadas {len(new_faqs)} FAQs (versión {v}).")
+                st.info("Hacé **Rebuild Index** desde 🔧 Index para que el chat las vea.")
+            else:
+                st.error(f"Falló: {msg}")
 
 
 # ---------- Reglas ----------
 with tab_rules:
     st.header("Hard Rules — Reglas inquebrantables")
-    st.caption("Estas reglas se prependen al system prompt en cada conversación con prioridad absoluta. "
-               "Son hot-reload: NO requieren rebuild del índice. El backend las relee automáticamente "
-               "en cada /chat.")
-    cur = load_curation()
-    rules = cur.get("hard_rules") or []
+    st.caption("Hot-reload: NO requieren rebuild. El backend las relee en cada /chat.")
 
-    st.markdown(f"**{len(rules)} reglas activas** (curation.json versión {cur.get('version')})")
+    ok, cur = api_get(backend_url, admin_token, "/admin/curation")
+    if not ok or not isinstance(cur, dict):
+        st.error(f"No pude leer curation: {cur}")
+    else:
+        rules = cur.get("hard_rules") or []
+        st.markdown(f"**{len(rules)} reglas activas** (versión {cur.get('version')})")
 
-    edited_rules: list[str] = []
-    for i, r in enumerate(rules):
-        cols = st.columns([10, 1])
-        text = cols[0].text_area(f"Regla {i + 1}", value=r, height=80, key=f"rule_{i}",
-                                 label_visibility="collapsed")
-        delete = cols[1].checkbox("🗑️", key=f"del_rule_{i}")
-        if not delete and text.strip():
-            edited_rules.append(text.strip())
+        edited_rules: list[str] = []
+        for i, r in enumerate(rules):
+            cols = st.columns([10, 1])
+            text = cols[0].text_area(f"Regla {i + 1}", value=r, height=80, key=f"rule_{i}",
+                                     label_visibility="collapsed")
+            delete = cols[1].checkbox("🗑️", key=f"del_rule_{i}")
+            if not delete and text.strip():
+                edited_rules.append(text.strip())
 
-    st.divider()
-    new_rule = st.text_area("Agregar nueva regla", key="new_rule", height=80,
-                            placeholder="Ej: Nunca inventes información operativa (locales, horarios, plazos, precios).")
+        st.divider()
+        new_rule = st.text_area(
+            "Agregar nueva regla", key="new_rule", height=80,
+            placeholder="Ej: Nunca inventes información operativa (locales, horarios, plazos, precios).",
+        )
 
-    if st.button("💾 Guardar hard rules", type="primary"):
-        if new_rule.strip():
-            edited_rules.append(new_rule.strip())
-        cur["hard_rules"] = edited_rules
-        save_curation(cur)
-        st.success(f"Guardadas {len(edited_rules)} reglas. Activas en la próxima conversación.")
-        st.rerun()
+        if st.button("💾 Guardar hard rules", type="primary"):
+            if new_rule.strip():
+                edited_rules.append(new_rule.strip())
+            cur["hard_rules"] = edited_rules
+            ok_save, msg = api_post(backend_url, admin_token, "/admin/curation", json=cur)
+            if ok_save:
+                st.success(f"Guardadas {len(edited_rules)} reglas. Activas en la próxima conversación.")
+                st.rerun()
+            else:
+                st.error(f"Falló: {msg}")
 
 
 # ---------- PDFs ----------
 with tab_pdfs:
     st.header("PDFs — Hojas técnicas internas")
-    st.caption("Subí PDFs de hojas técnicas, manuales, fichas de seguridad. Se chunkean por página y "
-               "entran al RAG con source_type='pdf'. Después de subir hay que correr Re-ingestar PDFs + "
-               "Rebuild Index + Reload Backend.")
-    PDFS_DIR.mkdir(parents=True, exist_ok=True)
+    st.caption("Subí PDFs (chunkeados por página). Después Re-ingestar PDFs + Rebuild Index.")
 
     uploaded = st.file_uploader("Subí uno o varios PDFs", type=["pdf"], accept_multiple_files=True)
     product_handle = st.text_input(
         "Handle del producto asociado (opcional)",
         placeholder="ej: adhesivo-poliuretanico-pl-premium",
-        help="Si los PDFs son fichas técnicas de un producto puntual, pegale el handle. Se guarda como metadata."
+        help="Si los PDFs son fichas de un producto puntual, ponele el handle.",
     )
     if uploaded and st.button("📥 Guardar PDFs subidos"):
         for up in uploaded:
-            target = PDFS_DIR / up.name
-            target.write_bytes(up.read())
-            if product_handle.strip():
-                sidecar = target.with_suffix(".meta.json")
-                sidecar.write_text(json.dumps({"product_handle": product_handle.strip()},
-                                              ensure_ascii=False, indent=2), encoding="utf-8")
-            st.success(f"Guardado {up.name}")
+            ok_up, msg = api_post_multipart(
+                backend_url, admin_token, "/admin/pdfs/upload",
+                files={"file": (up.name, up.getvalue(), "application/pdf")},
+                data={"product_handle": product_handle.strip()} if product_handle.strip() else None,
+                timeout=120.0,
+            )
+            if ok_up:
+                st.success(f"Subido {up.name}")
+            else:
+                st.error(f"Falló {up.name}: {msg}")
+        st.rerun()
+
     st.divider()
 
-    pdfs = sorted(PDFS_DIR.glob("*.pdf"))
+    ok_l, payload = api_get(backend_url, admin_token, "/admin/pdfs")
+    pdfs = payload.get("pdfs", []) if (ok_l and isinstance(payload, dict)) else []
     if pdfs:
-        st.markdown(f"**{len(pdfs)} PDFs en data/pdfs/:**")
+        st.markdown(f"**{len(pdfs)} PDFs en el backend:**")
         for p in pdfs:
-            sidecar = p.with_suffix(".meta.json")
-            sidecar_info = ""
-            if sidecar.exists():
-                try:
-                    meta = json.loads(sidecar.read_text(encoding="utf-8"))
-                    sidecar_info = f" — producto: `{meta.get('product_handle')}`"
-                except Exception:
-                    pass
             cols = st.columns([10, 1])
-            cols[0].text(f"📄 {p.name} ({p.stat().st_size // 1024} KB){sidecar_info}")
-            if cols[1].button("🗑️", key=f"del_{p.name}"):
-                p.unlink()
-                if sidecar.exists():
-                    sidecar.unlink()
-                st.rerun()
+            handle_info = f" — producto: `{p['product_handle']}`" if p.get("product_handle") else ""
+            cols[0].text(f"📄 {p['filename']} ({fmt_size(p['size_bytes'])}){handle_info}")
+            if cols[1].button("🗑️", key=f"del_{p['filename']}"):
+                ok_del, msg = api_delete(backend_url, admin_token, f"/admin/pdfs/{p['filename']}")
+                if ok_del:
+                    st.rerun()
+                else:
+                    st.error(msg)
     else:
         st.info("Todavía no hay PDFs subidos.")
 
     st.divider()
-    if st.button("🔄 Re-ingestar PDFs", help="Corre ingest_pdfs.py sobre todos los PDFs de data/pdfs/"):
-        with st.spinner("Procesando PDFs..."):
-            rc, out, err = run_cmd([sys.executable, "-m", "ingestion.ingest_pdfs"])
-        st.code(out + ("\n" + err if err else ""))
-        if rc == 0:
-            st.success("Re-ingestión OK. Hacé Rebuild Index para que entren al RAG.")
+    if st.button("🔄 Re-ingestar PDFs"):
+        with st.spinner("Procesando PDFs en el backend..."):
+            ok_ing, res = api_post(backend_url, admin_token, "/admin/ingest/pdfs", timeout=150.0)
+        if ok_ing and isinstance(res, dict):
+            st.code(res.get("stdout", "") + (("\n" + res.get("stderr", "")) if res.get("stderr") else ""))
+            if res.get("ok"):
+                st.success("Re-ingestión OK. Hacé Rebuild Index para que entren al RAG.")
+            else:
+                st.error(f"Re-ingestión falló (rc={res.get('returncode')}).")
         else:
-            st.error(f"Re-ingestión falló (rc={rc}).")
+            st.error(f"Falló: {res}")
 
 
 # ---------- Web ----------
 with tab_web:
     st.header("Crawl Web — www.suprabond.com / .com.ar")
-    st.caption("Crawler BFS del sitio corporativo. Excluye la tienda Shopify para no duplicar.")
+    st.caption("BFS depth-2, respeta robots.txt, excluye la tienda Shopify.")
 
     start_url = st.text_input(
-        "Start URL (vacío = prueba defaults)",
+        "Start URL (vacío = prueba defaults del backend)",
         placeholder="https://www.suprabond.com.ar",
     )
     depth = st.slider("Depth (BFS)", 0, 3, 2)
     max_pages = st.slider("Max páginas", 10, 500, 200, 10)
 
     if st.button("🕸️ Correr crawl", type="primary"):
-        cmd = [sys.executable, "-m", "ingestion.ingest_web",
-               "--depth", str(depth), "--max-pages", str(max_pages)]
-        if start_url.strip():
-            cmd += ["--start", start_url.strip()]
-        with st.spinner("Crawleando (puede tardar unos minutos)..."):
-            rc, out, err = run_cmd(cmd)
-        st.code(out + ("\n" + err if err else ""), language="text")
-        if rc == 0:
-            st.success("Crawl OK. Hacé Rebuild Index para que entren al RAG.")
+        with st.spinner("Crawleando en el backend (puede tardar unos minutos)..."):
+            ok_c, res = api_post(
+                backend_url, admin_token, "/admin/ingest/web",
+                json={"start_url": start_url.strip() or None, "depth": depth, "max_pages": max_pages},
+                timeout=320.0,
+            )
+        if ok_c and isinstance(res, dict):
+            st.code(res.get("stdout", "") + (("\n" + res.get("stderr", "")) if res.get("stderr") else ""))
+            if res.get("ok"):
+                st.success("Crawl OK. Hacé Rebuild Index para que entren al RAG.")
+            else:
+                st.error(f"Crawl falló (rc={res.get('returncode')}).")
         else:
-            st.error(f"Crawl falló (rc={rc}).")
+            st.error(f"Falló: {res}")
 
-    if DOCS_WEB_JSONL.exists() and DOCS_WEB_JSONL.stat().st_size > 0:
-        with DOCS_WEB_JSONL.open(encoding="utf-8") as f:
-            docs = [json.loads(line) for line in f if line.strip()]
-        st.markdown(f"**{len(docs)} páginas en docs_web.jsonl**")
-        if docs:
-            tabla = pd.DataFrame([
-                {"id": d["id"], "title": d.get("title", "")[:60], "url": d.get("url"),
-                 "chars": (d.get("metadata") or {}).get("length", 0)}
-                for d in docs
-            ])
-            st.dataframe(tabla, use_container_width=True, hide_index=True)
+    ok_d, payload = api_get(backend_url, admin_token, "/admin/docs/web")
+    docs = payload.get("docs", []) if (ok_d and isinstance(payload, dict)) else []
+    if docs:
+        st.markdown(f"**{len(docs)} páginas capturadas**")
+        tabla = pd.DataFrame([
+            {
+                "id": d.get("id"),
+                "title": (d.get("title") or "")[:60],
+                "url": d.get("url"),
+                "chars": (d.get("metadata") or {}).get("length", 0),
+            }
+            for d in docs
+        ])
+        st.dataframe(tabla, use_container_width=True, hide_index=True)
 
 
 # ---------- Index ----------
 with tab_index:
     st.header("Index FAISS — Rebuild + Reload")
-    st.caption("Rebuild lee TODAS las fuentes (productos + PDFs + web + FAQs) y regenera el índice. "
-               "Reload le pide al backend que recargue el index sin reiniciar el servicio.")
+    st.caption("Rebuild regenera el FAISS desde TODAS las fuentes en el backend. "
+               "Reload solo recarga el index ya construido sin re-embedear.")
 
     col_left, col_right = st.columns(2)
     with col_left:
         st.markdown("### 🔨 Rebuild Index")
-        st.markdown("Requiere `OPENAI_API_KEY` en el entorno. Costo: ~USD 0.005 para ~750 docs.")
+        st.markdown("Llama al endpoint del backend. Requiere `OPENAI_API_KEY` configurada en el server. "
+                    "Costo: ~USD 0.005 para ~750 docs.")
         skip_products = st.checkbox("Skip products", value=False)
         skip_pdfs = st.checkbox("Skip pdfs", value=False)
         skip_web = st.checkbox("Skip web", value=False)
         skip_faqs = st.checkbox("Skip faqs", value=False)
         if st.button("🔨 Rebuild Index", type="primary"):
-            if not os.environ.get("OPENAI_API_KEY"):
-                st.error("Falta OPENAI_API_KEY en el entorno del backoffice.")
-            else:
-                cmd = [sys.executable, "-m", "embeddings.build_index"]
-                if skip_products: cmd.append("--skip-products")
-                if skip_pdfs: cmd.append("--skip-pdfs")
-                if skip_web: cmd.append("--skip-web")
-                if skip_faqs: cmd.append("--skip-faqs")
-                with st.spinner("Construyendo embeddings + index..."):
-                    rc, out, err = run_cmd(cmd)
-                st.code(out + ("\n" + err if err else ""), language="text")
-                if rc == 0:
-                    st.success("Index rebuilt. Hacé Reload Backend para que el chat lo use.")
+            with st.spinner("Rebuildeando en el backend..."):
+                ok_r, res = api_post(
+                    backend_url, admin_token, "/admin/rebuild",
+                    json={
+                        "skip_products": skip_products,
+                        "skip_pdfs": skip_pdfs,
+                        "skip_web": skip_web,
+                        "skip_faqs": skip_faqs,
+                    },
+                    timeout=320.0,
+                )
+            if ok_r and isinstance(res, dict):
+                st.code(res.get("stdout", "") + (("\n" + res.get("stderr", "")) if res.get("stderr") else ""))
+                if res.get("ok"):
+                    st.success("Index rebuilt. El backend ya recargó automáticamente — el chat ve el nuevo index.")
                 else:
-                    st.error(f"Rebuild falló (rc={rc}).")
+                    st.error(f"Rebuild falló (rc={res.get('returncode')}).")
+            else:
+                st.error(f"Falló: {res}")
 
     with col_right:
         st.markdown("### 🔄 Reload Backend")
-        st.markdown(f"Le pide al backend en `{backend_url}` que recargue el index + curation.")
+        st.markdown("Solo recarga products_by_handle + index + curation desde disco. Útil si "
+                    "alguien tocó archivos del corpus sin rebuild.")
         if st.button("🔄 Reload Backend"):
-            ok, msg = call_backend_reload(backend_url, admin_token)
-            if ok:
+            ok_rl, msg = api_post(backend_url, admin_token, "/admin/reload", timeout=30.0)
+            if ok_rl:
                 st.success(f"Reload OK: {msg}")
             else:
                 st.error(f"Reload falló: {msg}")
 
         st.markdown("### 🛒 Re-ingestar Shopify")
-        st.markdown("Pulla el catálogo de tienda.suprabond.com a products.jsonl.")
+        st.markdown("Pulla el catálogo de tienda.suprabond.com.")
         if st.button("🛒 Re-ingestar Shopify"):
             with st.spinner("Bajando catálogo Shopify..."):
-                rc, out, err = run_cmd([sys.executable, "ingestion/ingest_shopify.py"])
-            st.code(out + ("\n" + err if err else ""), language="text")
-            if rc == 0:
-                st.success("Catálogo OK. Hacé Rebuild Index para que entre al RAG.")
+                ok_s, res = api_post(backend_url, admin_token, "/admin/ingest/shopify", timeout=200.0)
+            if ok_s and isinstance(res, dict):
+                st.code(res.get("stdout", "") + (("\n" + res.get("stderr", "")) if res.get("stderr") else ""))
+                if res.get("ok"):
+                    st.success("Catálogo OK. Hacé Rebuild Index para que entre al RAG.")
+                else:
+                    st.error(f"Falló (rc={res.get('returncode')}).")
             else:
-                st.error(f"Falló (rc={rc}).")
+                st.error(f"Falló: {res}")
 
 
 # ---------- Salud ----------
@@ -512,52 +582,48 @@ with tab_salud:
     st.header("Salud del sistema")
     st.caption("Estado de las fuentes del corpus + healthcheck del backend + métricas de la DB.")
 
-    st.markdown("### Archivos del corpus")
-    files_info = [
-        ("Catálogo Shopify", PRODUCTS_JSONL, "products.jsonl"),
-        ("PDFs ingestados", DOCS_PDFS_JSONL, "docs_pdfs.jsonl"),
-        ("Páginas web crawled", DOCS_WEB_JSONL, "docs_web.jsonl"),
-        ("Vector store FAISS", INDEX_PATH, "products.faiss"),
-        ("Curation (rules + FAQs)", CURATION_PATH, "curation.json"),
-    ]
-    salud_rows = []
-    for label, path, fname in files_info:
-        status, mtime = file_status(path)
-        salud_rows.append({
-            "Fuente": label,
-            "Archivo": fname,
-            "Estado": status,
-            "Última modificación": mtime or "—",
-        })
-    st.dataframe(pd.DataFrame(salud_rows), use_container_width=True, hide_index=True)
+    st.markdown("### Archivos del corpus (en el backend)")
+    ok_f, payload = api_get(backend_url, admin_token, "/admin/health/files")
+    files = payload.get("files", []) if (ok_f and isinstance(payload, dict)) else []
+    if files:
+        rows = []
+        for f in files:
+            if f.get("exists"):
+                rows.append({
+                    "Fuente": f["label"],
+                    "Archivo": f["filename"],
+                    "Estado": f"✅ {fmt_size(f['size_bytes'])}",
+                    "Última modificación": fmt_ts(f.get("mtime")),
+                })
+            else:
+                rows.append({
+                    "Fuente": f["label"],
+                    "Archivo": f["filename"],
+                    "Estado": "❌ no existe",
+                    "Última modificación": "—",
+                })
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+    else:
+        st.warning("No pude leer estado de archivos.")
 
-    st.markdown("### Backend status")
-    try:
-        import httpx
-        r = httpx.get(f"{backend_url.rstrip('/')}/healthz", timeout=5)
-        if r.status_code == 200:
-            st.json(r.json())
-        else:
-            st.warning(f"HTTP {r.status_code}: {r.text}")
-    except Exception as exc:
-        st.warning(f"Backend no responde ({backend_url}): {exc}")
+    st.markdown("### Backend status (/healthz)")
+    ok_h, hdata = api_get(backend_url, admin_token, "/healthz")
+    if ok_h:
+        st.json(hdata)
+    else:
+        st.warning(f"No pude leer healthz: {hdata}")
 
-    st.markdown("### DB stats (SQLite local)")
-    s = db.stats()
-    c1, c2, c3, c4, c5 = st.columns(5)
-    c1.metric("Turns", s["turns"])
-    c2.metric("Sesiones", s["sessions"])
-    c3.metric("👍 Good", s["feedback_good"])
-    c4.metric("👎 Bad", s["feedback_bad"])
-    c5.metric("Total feedback", s["feedback_total"])
+    st.markdown("### DB stats (SQLite del backend)")
+    ok_s, stats = api_get(backend_url, admin_token, "/admin/db/stats")
+    if ok_s and isinstance(stats, dict):
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Turns", stats.get("turns", 0))
+        c2.metric("Sesiones", stats.get("sessions", 0))
+        c3.metric("👍 Good", stats.get("feedback_good", 0))
+        c4.metric("👎 Bad", stats.get("feedback_bad", 0))
+        c5.metric("Total feedback", stats.get("feedback_total", 0))
 
-    st.markdown("### Catalog stats (vía backend)")
-    try:
-        import httpx
-        r = httpx.get(f"{backend_url.rstrip('/')}/catalog/stats", timeout=5)
-        if r.status_code == 200:
-            st.json(r.json())
-        else:
-            st.caption(f"(backend respondió {r.status_code})")
-    except Exception as exc:
-        st.caption(f"(backend no respondió: {exc})")
+    st.markdown("### Catalog stats")
+    ok_c, cstats = api_get(backend_url, admin_token, "/catalog/stats")
+    if ok_c:
+        st.json(cstats)

@@ -307,7 +307,7 @@ def admin_db_stats(x_admin_token: str | None = Header(None)):
 # =====================================================================
 # Endpoints admin para el backoffice (kitchen) — el panel los usa por HTTP
 # en vez de tocar el filesystem directo. Así Kitchen puede correr en otro
-# host (kitchen.parlata.ai) y el backend (bondi.parlata.ai) sigue siendo
+# host (admin.suprabond.ai) y el backend (bondi.suprabond.ai) sigue siendo
 # la única fuente de verdad del corpus.
 # =====================================================================
 

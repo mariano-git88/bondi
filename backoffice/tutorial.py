@@ -122,7 +122,7 @@ def render() -> None:
            cada guardado).
         4. Andá a `🔧 Index` → Rebuild Index → Reload Backend.
         5. Probá en el chat la pregunta. **Limpiá el chat antes**
-           (botón "Limpiar" en `bondi.parlata.ai`) para que no use el
+           (botón "Limpiar" en `bondi.suprabond.ai`) para que no use el
            history viejo.
         """
     )

@@ -1,22 +1,32 @@
-# Render blueprint para Bondi — un Web Service que hostea API + chat público.
+# Render blueprint — dos servicios:
 #
-# Cómo deployar:
-#   1. Pusheá este repo a GitHub.
-#   2. En Render → New → Blueprint, conectá el repo. Render lee este YAML.
-#   3. Render pide las env vars marcadas `sync: false`:
-#        ANTHROPIC_API_KEY, OPENAI_API_KEY, BONDI_ADMIN_PASS
-#      Completalas y darle "Apply".
-#   4. El build corre ~3 min:
-#        pip install → ingest_shopify (~6s) → ingest_web (~1-2 min, 200 páginas)
-#        → build_index (~15s, ~USD 0.005 a OpenAI).
-#   5. Cuando termine, el chat público queda en https://<service>.onrender.com/
-#      y los endpoints en https://<service>.onrender.com/healthz, /chat, etc.
+#   1. bondi-api     → FastAPI + chat público.        custom domain: bondi.suprabond.ai
+#   2. bondi-kitchen → Streamlit (cliente HTTP).      custom domain: admin.suprabond.ai
 #
-# Plan starter ($7/mes) trae disk persistente para data/ — sin él los
-# PDFs subidos al backoffice se pierden en cada deploy. Si querés probar
-# en plan free, sacá la sección `disk:` (build regenera todo cada deploy).
+# El backend tiene un disk persistente de 1GB en /data — ahí viven el
+# FAISS, la SQLite, los PDFs subidos, y el curation.json. Kitchen NO
+# tiene disk: todas las operaciones de lectura/escritura van por HTTP
+# a bondi-api (endpoints /admin/*).
+#
+# Setup en Render (después de pushear el repo):
+#
+#   1. Dashboard → New → Blueprint → conectar repo `mariano-git88/bondi`.
+#   2. Render lee este YAML y crea los 2 services.
+#   3. Cargar las env vars en cada uno (marcadas `sync: false`):
+#        bondi-api:        ANTHROPIC_API_KEY, OPENAI_API_KEY, BONDI_ADMIN_PASS
+#        bondi-kitchen:    BONDI_ADMIN_PASS (la misma)
+#      BONDI_BACKEND_URL de kitchen se llena automático con `fromService`.
+#   4. Apply → primer build ~3 min (api) + 2 min (kitchen).
+#   5. Configurar custom domains:
+#        bondi-api    → bondi.suprabond.ai
+#        bondi-kitchen → admin.suprabond.ai
+#      Render pide agregar un CNAME en GoDaddy apuntando al hostname
+#      que Render provee (típicamente <service>.onrender.com).
 
 services:
+  # =====================================================================
+  # 1. Backend FastAPI + chat público
+  # =====================================================================
   - type: web
     name: bondi-api
     runtime: python
@@ -42,3 +52,32 @@ services:
         sync: false
       - key: BONDI_ADMIN_PASS
         sync: false
+
+  # =====================================================================
+  # 2. Backoffice Streamlit (kitchen) — cliente HTTP del backend
+  # =====================================================================
+  - type: web
+    name: bondi-kitchen
+    runtime: python
+    plan: starter
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: |
+      streamlit run backoffice/app.py \
+        --server.port=$PORT \
+        --server.address=0.0.0.0 \
+        --server.headless=true \
+        --browser.gatherUsageStats=false
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: BONDI_ADMIN_PASS
+        sync: false
+      # URL del backend al que pega kitchen. Render la inyecta sola
+      # desde el otro service para que apunten bien aunque cambien
+      # los hostnames.
+      - key: BONDI_BACKEND_URL
+        fromService:
+          type: web
+          name: bondi-api
+          property: hostport

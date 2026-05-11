@@ -1,21 +1,27 @@
 """
-app.py — Backoffice Streamlit de Bondi.
+app.py — Backoffice Streamlit de Bondi (kitchen).
 
 Tabs:
-  📊 Dashboard         — stats generales
-  💬 Conversaciones    — lista + detalle + feedback (good/bad/flag)
-  📋 Curaduría (FAQs)  — CRUD de FAQs que entran al RAG
-  ⚖️ Hard Rules        — CRUD de reglas inquebrantables del system prompt
-  📄 PDFs              — upload + lista + re-ingestion
-  🌐 Crawl Web         — trigger crawl del sitio corporativo
-  🔧 Index             — rebuild + reload backend
+  📊 Resumen        — stats globales + estado del backend
+  💬 Conversaciones — log de chats + feedback (good/bad/flag)
+  📋 FAQs           — CRUD de FAQs que entran al RAG
+  ⚖️ Reglas         — Hard Rules inquebrantables del system prompt
+  📄 PDFs           — upload + re-ingestion
+  🌐 Web            — crawler del sitio corporativo
+  🔧 Index          — rebuild + reload backend
+  ❤️ Salud          — archivos del corpus + healthcheck + db stats
 
 Auth: password en sidebar contra env BONDI_ADMIN_PASS (default 'admin').
+
+Tema visual: estilo Vitsoe/Dieter Rams (theme.py) — sin border-radius,
+bordes finos, acento naranja-óxido #C8552F.
+
+Tutorial: modal con @st.dialog, botón en el header.
 
 Run:
     cd bondi
     export BONDI_ADMIN_PASS=tu-password
-    export OPENAI_API_KEY=sk-...    # para rebuild
+    export OPENAI_API_KEY=sk-...        # para rebuilds
     streamlit run backoffice/app.py
 """
 
@@ -38,6 +44,9 @@ sys.path.insert(0, str(ROOT))
 
 from backend import db  # noqa: E402
 
+import theme  # noqa: E402  (local al package backoffice)
+import tutorial  # noqa: E402
+
 CURATION_PATH = ROOT / "data" / "curation.json"
 PDFS_DIR = ROOT / "data" / "pdfs"
 DOCS_PDFS_JSONL = ROOT / "data" / "docs_pdfs.jsonl"
@@ -48,7 +57,17 @@ META_PATH = ROOT / "data" / "products_metadata.pkl"
 
 BACKEND_URL_DEFAULT = os.environ.get("BONDI_BACKEND_URL", "http://localhost:8000")
 
-st.set_page_config(page_title="Bondi Backoffice", page_icon="🤖", layout="wide")
+
+# =====================================================================
+# Page config + theme — DEBE ir antes de cualquier otro elemento
+# =====================================================================
+
+st.set_page_config(
+    page_title="Bondi — Kitchen",
+    page_icon="🤖",
+    layout="wide",
+)
+theme.apply_theme()
 db.init_db()
 
 
@@ -58,18 +77,11 @@ db.init_db()
 
 def load_curation() -> dict:
     if not CURATION_PATH.exists():
-        return {
-            "version": 1,
-            "hard_rules": [],
-            "faqs": [],
-            "disclaimers": {},
-            "contact": {},
-        }
+        return {"version": 1, "hard_rules": [], "faqs": [], "disclaimers": {}, "contact": {}}
     return json.loads(CURATION_PATH.read_text(encoding="utf-8"))
 
 
 def save_curation(data: dict) -> None:
-    # Bump de version + updated_at en cada guardado para que el agent lo sepa.
     data["version"] = int(data.get("version") or 0) + 1
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     CURATION_PATH.write_text(
@@ -100,26 +112,38 @@ def call_backend_reload(backend_url: str, admin_token: str) -> tuple[bool, str]:
         return False, str(exc)
 
 
-def file_exists_info(p: Path) -> str:
+def file_status(p: Path) -> tuple[str, str]:
+    """Devuelve (status_emoji_label, detalle)."""
     if not p.exists():
-        return "❌ no existe"
+        return "❌ no existe", ""
     size = p.stat().st_size
     mtime = datetime.fromtimestamp(p.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
     if size < 1024:
-        return f"✅ {size} B — {mtime}"
-    if size < 1024 * 1024:
-        return f"✅ {size / 1024:.1f} KB — {mtime}"
-    return f"✅ {size / (1024 * 1024):.1f} MB — {mtime}"
+        s = f"{size} B"
+    elif size < 1024 * 1024:
+        s = f"{size / 1024:.1f} KB"
+    else:
+        s = f"{size / (1024 * 1024):.1f} MB"
+    return f"✅ {s}", mtime
 
 
 # =====================================================================
-# Auth
+# Tutorial modal
+# =====================================================================
+
+@st.dialog("Tutorial — Cómo usar el backoffice de Bondi", width="large")
+def _show_tutorial_dialog():
+    tutorial.render()
+
+
+# =====================================================================
+# Auth gate
 # =====================================================================
 
 def check_auth() -> bool:
     expected = os.environ.get("BONDI_ADMIN_PASS") or "admin"
     if expected == "admin":
-        st.sidebar.warning("⚠️ BONDI_ADMIN_PASS no configurada — usando default 'admin'.")
+        st.sidebar.warning("⚠️ BONDI_ADMIN_PASS no configurado — usando default 'admin'.")
     pwd = st.sidebar.text_input("Password", type="password", key="auth_pwd")
     if not pwd:
         st.sidebar.info("Ingresá la password para acceder.")
@@ -127,7 +151,7 @@ def check_auth() -> bool:
     if pwd != expected:
         st.sidebar.error("Password incorrecta.")
         return False
-    st.sidebar.success("Autenticado ✅")
+    st.sidebar.success("Autenticado")
     return True
 
 
@@ -135,7 +159,8 @@ def check_auth() -> bool:
 # Sidebar
 # =====================================================================
 
-st.sidebar.title("🤖 Bondi Backoffice")
+st.sidebar.title("Kitchen")
+st.sidebar.caption("Backoffice operativo de Bondi")
 
 if not check_auth():
     st.stop()
@@ -144,33 +169,42 @@ operator = st.sidebar.text_input("Operador (para feedback)", value="anon")
 backend_url = st.sidebar.text_input("Backend URL", value=BACKEND_URL_DEFAULT)
 admin_token = os.environ.get("BONDI_ADMIN_PASS") or "admin"
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("### Archivos")
-st.sidebar.text(f"products.jsonl: {file_exists_info(PRODUCTS_JSONL)}")
-st.sidebar.text(f"docs_pdfs.jsonl: {file_exists_info(DOCS_PDFS_JSONL)}")
-st.sidebar.text(f"docs_web.jsonl: {file_exists_info(DOCS_WEB_JSONL)}")
-st.sidebar.text(f"index.faiss: {file_exists_info(INDEX_PATH)}")
-st.sidebar.text(f"curation.json: {file_exists_info(CURATION_PATH)}")
+
+# =====================================================================
+# Header con título + botón Tutorial
+# =====================================================================
+
+_col_title, _col_btn = st.columns([5, 1], vertical_alignment="center")
+with _col_title:
+    st.title("Kitchen — Bondi")
+    st.caption(
+        "Editá hard rules, FAQs, subí hojas técnicas y revisá conversaciones reales. "
+        "Si es tu primera vez, abrí el tutorial."
+    )
+with _col_btn:
+    if st.button("Tutorial", use_container_width=True, key="btn_tutorial"):
+        _show_tutorial_dialog()
 
 
 # =====================================================================
 # Tabs
 # =====================================================================
 
-tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index = st.tabs([
-    "📊 Dashboard",
+tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_salud = st.tabs([
+    "📊 Resumen",
     "💬 Conversaciones",
-    "📋 Curaduría (FAQs)",
-    "⚖️ Hard Rules",
+    "📋 FAQs",
+    "⚖️ Reglas",
     "📄 PDFs",
-    "🌐 Crawl Web",
+    "🌐 Web",
     "🔧 Index",
+    "❤️ Salud",
 ])
 
 
-# ---------- Dashboard ----------
+# ---------- Resumen ----------
 with tab_dash:
-    st.header("Dashboard")
+    st.header("Resumen")
     s = db.stats()
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("Turns", s["turns"])
@@ -179,22 +213,11 @@ with tab_dash:
     col4.metric("👎 Bad", s["feedback_bad"])
 
     cur = load_curation()
-    st.markdown("### Estado de curaduría")
+    st.markdown("### Curaduría")
     cc1, cc2, cc3 = st.columns(3)
     cc1.metric("Hard rules", len(cur.get("hard_rules") or []))
     cc2.metric("FAQs", len(cur.get("faqs") or []))
-    cc3.metric("Versión curation", cur.get("version") or 0)
-
-    st.markdown("### Backend status")
-    try:
-        import httpx
-        r = httpx.get(f"{backend_url.rstrip('/')}/healthz", timeout=5)
-        if r.status_code == 200:
-            st.json(r.json())
-        else:
-            st.warning(f"HTTP {r.status_code}: {r.text}")
-    except Exception as exc:
-        st.warning(f"Backend no responde ({backend_url}): {exc}")
+    cc3.metric("Versión", cur.get("version") or 0)
 
 
 # ---------- Conversaciones ----------
@@ -218,7 +241,7 @@ with tab_chats:
         ])
         st.dataframe(df, use_container_width=True, hide_index=True)
 
-        st.markdown("---")
+        st.divider()
         sel = st.number_input("Ver detalle de turn_id", min_value=0, step=1, value=0)
         if sel and sel > 0:
             t = db.get_turn(int(sel))
@@ -261,10 +284,11 @@ with tab_chats:
                     st.dataframe(pd.DataFrame(t["feedback"]), hide_index=True)
 
 
-# ---------- Curaduría (FAQs) ----------
+# ---------- FAQs ----------
 with tab_faqs:
     st.header("Curaduría — FAQs")
-    st.caption("Las FAQs se indexan junto con productos y son consultables por el agent vía search_knowledge.")
+    st.caption("Las FAQs se indexan junto con productos. El agent las consulta vía search_knowledge. "
+               "Recordá que cualquier edición acá requiere Rebuild Index + Reload Backend para impactar al chat.")
     cur = load_curation()
     faqs = cur.get("faqs") or []
     df = pd.DataFrame(faqs) if faqs else pd.DataFrame(columns=["id", "question", "answer", "tags"])
@@ -298,15 +322,15 @@ with tab_faqs:
         cur["faqs"] = new_faqs
         save_curation(cur)
         st.success(f"Guardadas {len(new_faqs)} FAQs (curation.json versión {cur['version']}).")
-        st.info("Recordá hacer **Rebuild Index** + **Reload backend** para que el agent las vea.")
+        st.info("Hacé **Rebuild Index** + **Reload Backend** desde 🔧 Index para que el agent las vea.")
 
 
-# ---------- Hard Rules ----------
+# ---------- Reglas ----------
 with tab_rules:
-    st.header("Hard Rules — Reglas inquebrantables del system prompt")
-    st.caption("Estas reglas se prependen al system prompt en CADA conversación con prioridad absoluta. "
-               "Después de editar, NO hace falta rebuild de index — sí hace falta que el backend recargue curation, "
-               "lo cual hace automáticamente en cada /chat (hot reload).")
+    st.header("Hard Rules — Reglas inquebrantables")
+    st.caption("Estas reglas se prependen al system prompt en cada conversación con prioridad absoluta. "
+               "Son hot-reload: NO requieren rebuild del índice. El backend las relee automáticamente "
+               "en cada /chat.")
     cur = load_curation()
     rules = cur.get("hard_rules") or []
 
@@ -321,16 +345,16 @@ with tab_rules:
         if not delete and text.strip():
             edited_rules.append(text.strip())
 
-    st.markdown("---")
+    st.divider()
     new_rule = st.text_area("Agregar nueva regla", key="new_rule", height=80,
-                            placeholder="Ej: Nunca recomiendes productos de marcas que no sean Suprabond, Bulit o Somerset.")
+                            placeholder="Ej: Nunca inventes información operativa (locales, horarios, plazos, precios).")
 
     if st.button("💾 Guardar hard rules", type="primary"):
         if new_rule.strip():
             edited_rules.append(new_rule.strip())
         cur["hard_rules"] = edited_rules
         save_curation(cur)
-        st.success(f"Guardadas {len(edited_rules)} reglas. El agent las va a usar a partir del próximo /chat.")
+        st.success(f"Guardadas {len(edited_rules)} reglas. Activas en la próxima conversación.")
         st.rerun()
 
 
@@ -338,15 +362,15 @@ with tab_rules:
 with tab_pdfs:
     st.header("PDFs — Hojas técnicas internas")
     st.caption("Subí PDFs de hojas técnicas, manuales, fichas de seguridad. Se chunkean por página y "
-               "entran al RAG con source_type='pdf'. Después de subir hay que correr 'Re-ingestar PDFs' y "
-               "'Rebuild Index'.")
+               "entran al RAG con source_type='pdf'. Después de subir hay que correr Re-ingestar PDFs + "
+               "Rebuild Index + Reload Backend.")
     PDFS_DIR.mkdir(parents=True, exist_ok=True)
 
     uploaded = st.file_uploader("Subí uno o varios PDFs", type=["pdf"], accept_multiple_files=True)
     product_handle = st.text_input(
         "Handle del producto asociado (opcional)",
         placeholder="ej: adhesivo-poliuretanico-pl-premium",
-        help="Si los PDFs son fichas técnicas de un producto puntual, ponele el handle. Se guarda como metadata."
+        help="Si los PDFs son fichas técnicas de un producto puntual, pegale el handle. Se guarda como metadata."
     )
     if uploaded and st.button("📥 Guardar PDFs subidos"):
         for up in uploaded:
@@ -357,7 +381,7 @@ with tab_pdfs:
                 sidecar.write_text(json.dumps({"product_handle": product_handle.strip()},
                                               ensure_ascii=False, indent=2), encoding="utf-8")
             st.success(f"Guardado {up.name}")
-    st.markdown("---")
+    st.divider()
 
     pdfs = sorted(PDFS_DIR.glob("*.pdf"))
     if pdfs:
@@ -381,7 +405,7 @@ with tab_pdfs:
     else:
         st.info("Todavía no hay PDFs subidos.")
 
-    st.markdown("---")
+    st.divider()
     if st.button("🔄 Re-ingestar PDFs", help="Corre ingest_pdfs.py sobre todos los PDFs de data/pdfs/"):
         with st.spinner("Procesando PDFs..."):
             rc, out, err = run_cmd([sys.executable, "-m", "ingestion.ingest_pdfs"])
@@ -392,7 +416,7 @@ with tab_pdfs:
             st.error(f"Re-ingestión falló (rc={rc}).")
 
 
-# ---------- Crawl Web ----------
+# ---------- Web ----------
 with tab_web:
     st.header("Crawl Web — www.suprabond.com / .com.ar")
     st.caption("Crawler BFS del sitio corporativo. Excluye la tienda Shopify para no duplicar.")
@@ -409,7 +433,7 @@ with tab_web:
                "--depth", str(depth), "--max-pages", str(max_pages)]
         if start_url.strip():
             cmd += ["--start", start_url.strip()]
-        with st.spinner(f"Crawleando (puede tardar unos minutos)..."):
+        with st.spinner("Crawleando (puede tardar unos minutos)..."):
             rc, out, err = run_cmd(cmd)
         st.code(out + ("\n" + err if err else ""), language="text")
         if rc == 0:
@@ -417,7 +441,7 @@ with tab_web:
         else:
             st.error(f"Crawl falló (rc={rc}).")
 
-    if DOCS_WEB_JSONL.exists():
+    if DOCS_WEB_JSONL.exists() and DOCS_WEB_JSONL.stat().st_size > 0:
         with DOCS_WEB_JSONL.open(encoding="utf-8") as f:
             docs = [json.loads(line) for line in f if line.strip()]
         st.markdown(f"**{len(docs)} páginas en docs_web.jsonl**")
@@ -434,7 +458,7 @@ with tab_web:
 with tab_index:
     st.header("Index FAISS — Rebuild + Reload")
     st.caption("Rebuild lee TODAS las fuentes (productos + PDFs + web + FAQs) y regenera el índice. "
-               "Reload le pide al backend que recargue el index sin reiniciar.")
+               "Reload le pide al backend que recargue el index sin reiniciar el servicio.")
 
     col_left, col_right = st.columns(2)
     with col_left:
@@ -471,7 +495,7 @@ with tab_index:
             else:
                 st.error(f"Reload falló: {msg}")
 
-        st.markdown("### 🌐 Re-ingestar Shopify")
+        st.markdown("### 🛒 Re-ingestar Shopify")
         st.markdown("Pulla el catálogo de tienda.suprabond.com a products.jsonl.")
         if st.button("🛒 Re-ingestar Shopify"):
             with st.spinner("Bajando catálogo Shopify..."):
@@ -481,3 +505,59 @@ with tab_index:
                 st.success("Catálogo OK. Hacé Rebuild Index para que entre al RAG.")
             else:
                 st.error(f"Falló (rc={rc}).")
+
+
+# ---------- Salud ----------
+with tab_salud:
+    st.header("Salud del sistema")
+    st.caption("Estado de las fuentes del corpus + healthcheck del backend + métricas de la DB.")
+
+    st.markdown("### Archivos del corpus")
+    files_info = [
+        ("Catálogo Shopify", PRODUCTS_JSONL, "products.jsonl"),
+        ("PDFs ingestados", DOCS_PDFS_JSONL, "docs_pdfs.jsonl"),
+        ("Páginas web crawled", DOCS_WEB_JSONL, "docs_web.jsonl"),
+        ("Vector store FAISS", INDEX_PATH, "products.faiss"),
+        ("Curation (rules + FAQs)", CURATION_PATH, "curation.json"),
+    ]
+    salud_rows = []
+    for label, path, fname in files_info:
+        status, mtime = file_status(path)
+        salud_rows.append({
+            "Fuente": label,
+            "Archivo": fname,
+            "Estado": status,
+            "Última modificación": mtime or "—",
+        })
+    st.dataframe(pd.DataFrame(salud_rows), use_container_width=True, hide_index=True)
+
+    st.markdown("### Backend status")
+    try:
+        import httpx
+        r = httpx.get(f"{backend_url.rstrip('/')}/healthz", timeout=5)
+        if r.status_code == 200:
+            st.json(r.json())
+        else:
+            st.warning(f"HTTP {r.status_code}: {r.text}")
+    except Exception as exc:
+        st.warning(f"Backend no responde ({backend_url}): {exc}")
+
+    st.markdown("### DB stats (SQLite local)")
+    s = db.stats()
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("Turns", s["turns"])
+    c2.metric("Sesiones", s["sessions"])
+    c3.metric("👍 Good", s["feedback_good"])
+    c4.metric("👎 Bad", s["feedback_bad"])
+    c5.metric("Total feedback", s["feedback_total"])
+
+    st.markdown("### Catalog stats (vía backend)")
+    try:
+        import httpx
+        r = httpx.get(f"{backend_url.rstrip('/')}/catalog/stats", timeout=5)
+        if r.status_code == 200:
+            st.json(r.json())
+        else:
+            st.caption(f"(backend respondió {r.status_code})")
+    except Exception as exc:
+        st.caption(f"(backend no respondió: {exc})")

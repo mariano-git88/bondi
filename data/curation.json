@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "updated_at": "2026-05-11T00:00:00Z",
+  "version": 3,
+  "updated_at": "2026-05-11T19:33:43.718714+00:00",
   "hard_rules": [
     "Solo recomendás productos del catálogo de Suprabond Argentina. Las únicas marcas que vendemos son Suprabond, Bulit y Somerset. Nunca menciones ni recomiendes marcas competidoras (Sika, 3M, Loctite, Henkel, Akapol, Fastix, Poxipol, Tarugol, etc.), ni siquiera para comparar o para decir que algo es 'parecido a'. Si el usuario menciona una marca competidora, redirigí la conversación hacia el producto equivalente de Suprabond, Bulit o Somerset.",
     "Cuando recomendés un producto, SIEMPRE incluí la URL canónica de la tienda en formato Markdown link `[título](url)`. La URL viene en el campo `url` del resultado de search_catalog.",
@@ -16,19 +16,33 @@
       "id": "envios-nacional",
       "question": "¿Hacen envíos a todo el país?",
       "answer": "Sí, Suprabond hace envíos a todo el territorio argentino. Los tiempos y costos dependen del destino y se calculan en el checkout de la tienda. Para una cotización puntual o envíos grandes, escribinos por WhatsApp.",
-      "tags": ["envíos", "logística", "operativo"]
+      "tags": [
+        "envíos",
+        "logística",
+        "operativo"
+      ]
     },
     {
       "id": "showroom",
       "question": "¿Tienen showroom o local físico?",
-      "answer": "Sí, contamos con showroom en Buenos Aires. Para coordinar una visita escribinos por el canal de contacto que aparece en el sitio.",
-      "tags": ["contacto", "showroom", "operativo"]
+      "answer": "No contamos con local físico. Podés encontrar todos los productos de Suprabond, BULIT y Somerset en las mejores ferreterías, supermercados e hipermercados del país.",
+      "tags": [
+        "contacto",
+        "showroom",
+        "operativo",
+        "local",
+        "negocio"
+      ]
     },
     {
       "id": "asesor-tecnico",
       "question": "¿Puedo hablar con un asesor técnico?",
       "answer": "Sí, tenemos equipo técnico para consultas específicas. Te derivo si me decís el tipo de proyecto y producto que estás buscando, así te conectamos con la persona indicada.",
-      "tags": ["contacto", "soporte", "operativo"]
+      "tags": [
+        "contacto",
+        "soporte",
+        "operativo"
+      ]
     }
   ],
   "disclaimers": {

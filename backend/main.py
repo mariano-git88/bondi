@@ -31,11 +31,14 @@ import json
 import logging
 import os
 import secrets
+import subprocess
+import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, File, Form, Header, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -299,6 +302,206 @@ def admin_feedback(req: FeedbackRequest, x_admin_token: str | None = Header(None
 def admin_db_stats(x_admin_token: str | None = Header(None)):
     _check_admin(x_admin_token)
     return db.stats()
+
+
+# =====================================================================
+# Endpoints admin para el backoffice (kitchen) — el panel los usa por HTTP
+# en vez de tocar el filesystem directo. Así Kitchen puede correr en otro
+# host (kitchen.parlata.ai) y el backend (bondi.parlata.ai) sigue siendo
+# la única fuente de verdad del corpus.
+# =====================================================================
+
+@app.get("/admin/curation")
+def admin_curation_get(x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    return agent.load_curation()
+
+
+@app.post("/admin/curation")
+def admin_curation_post(payload: dict, x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    payload["version"] = int(payload.get("version") or 0) + 1
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+    Path("data/curation.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    _load_curation()
+    return {"saved": True, "version": payload["version"]}
+
+
+@app.get("/admin/pdfs")
+def admin_pdfs_list(x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    pdfs_dir = Path("data/pdfs")
+    pdfs_dir.mkdir(parents=True, exist_ok=True)
+    out = []
+    for p in sorted(pdfs_dir.glob("*.pdf")):
+        sidecar = p.with_suffix(".meta.json")
+        meta: dict = {}
+        if sidecar.exists():
+            try:
+                meta = json.loads(sidecar.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        out.append({
+            "filename": p.name,
+            "size_bytes": p.stat().st_size,
+            "product_handle": meta.get("product_handle"),
+        })
+    return {"pdfs": out}
+
+
+@app.post("/admin/pdfs/upload")
+async def admin_pdfs_upload(
+    file: UploadFile = File(...),
+    product_handle: str | None = Form(None),
+    x_admin_token: str | None = Header(None),
+):
+    _check_admin(x_admin_token)
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(400, "Solo se aceptan archivos .pdf")
+    pdfs_dir = Path("data/pdfs")
+    pdfs_dir.mkdir(parents=True, exist_ok=True)
+    target = pdfs_dir / Path(file.filename).name  # safe basename
+    content = await file.read()
+    target.write_bytes(content)
+    if product_handle and product_handle.strip():
+        sidecar = target.with_suffix(".meta.json")
+        sidecar.write_text(
+            json.dumps({"product_handle": product_handle.strip()}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return {"saved": True, "filename": target.name, "size_bytes": len(content)}
+
+
+@app.delete("/admin/pdfs/{filename}")
+def admin_pdfs_delete(filename: str, x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    safe = Path(filename).name  # evita ../ paths
+    p = Path("data/pdfs") / safe
+    if not p.exists():
+        raise HTTPException(404, f"No existe {safe}")
+    p.unlink()
+    sidecar = p.with_suffix(".meta.json")
+    if sidecar.exists():
+        sidecar.unlink()
+    return {"deleted": True, "filename": safe}
+
+
+def _run_subprocess(cmd: list[str], timeout: int) -> dict:
+    """Helper para correr subprocess y devolver dict serializable.
+
+    Trunca stdout/stderr para no devolver outputs gigantes al cliente.
+    """
+    try:
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return {
+            "ok": proc.returncode == 0,
+            "returncode": proc.returncode,
+            "stdout": (proc.stdout or "")[-4000:],
+            "stderr": (proc.stderr or "")[-2000:],
+        }
+    except subprocess.TimeoutExpired:
+        return {"ok": False, "returncode": -1, "stdout": "", "stderr": f"Timeout > {timeout}s"}
+
+
+@app.post("/admin/ingest/pdfs")
+def admin_ingest_pdfs(x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    return _run_subprocess([sys.executable, "-m", "ingestion.ingest_pdfs"], timeout=120)
+
+
+@app.post("/admin/ingest/shopify")
+def admin_ingest_shopify(x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    return _run_subprocess([sys.executable, "ingestion/ingest_shopify.py"], timeout=180)
+
+
+class WebCrawlRequest(BaseModel):
+    start_url: str | None = None
+    depth: int = 2
+    max_pages: int = 200
+
+
+@app.post("/admin/ingest/web")
+def admin_ingest_web(req: WebCrawlRequest, x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    cmd = [sys.executable, "-m", "ingestion.ingest_web",
+           "--depth", str(req.depth), "--max-pages", str(req.max_pages)]
+    if req.start_url:
+        cmd += ["--start", req.start_url]
+    return _run_subprocess(cmd, timeout=300)
+
+
+class RebuildRequest(BaseModel):
+    skip_products: bool = False
+    skip_pdfs: bool = False
+    skip_web: bool = False
+    skip_faqs: bool = False
+
+
+@app.post("/admin/rebuild")
+def admin_rebuild(req: RebuildRequest, x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    cmd = [sys.executable, "-m", "embeddings.build_index"]
+    if req.skip_products: cmd.append("--skip-products")
+    if req.skip_pdfs: cmd.append("--skip-pdfs")
+    if req.skip_web: cmd.append("--skip-web")
+    if req.skip_faqs: cmd.append("--skip-faqs")
+    result = _run_subprocess(cmd, timeout=300)
+    # Si el rebuild salió OK, recargo el engine in-process para que el
+    # próximo /chat use el index nuevo sin necesidad de /admin/reload.
+    if result["ok"]:
+        _load_engine()
+    return result
+
+
+@app.get("/admin/docs/web")
+def admin_docs_web(x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    p = Path("data/docs_web.jsonl")
+    if not p.exists() or p.stat().st_size == 0:
+        return {"docs": []}
+    docs = []
+    with p.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                docs.append(json.loads(line))
+    return {"docs": docs}
+
+
+@app.get("/admin/health/files")
+def admin_health_files(x_admin_token: str | None = Header(None)):
+    _check_admin(x_admin_token)
+    files_meta = [
+        ("Catálogo Shopify", "data/products.jsonl"),
+        ("PDFs ingestados", "data/docs_pdfs.jsonl"),
+        ("Páginas web crawled", "data/docs_web.jsonl"),
+        ("Vector store FAISS", "data/products.faiss"),
+        ("Curation", "data/curation.json"),
+    ]
+    out = []
+    for label, fname in files_meta:
+        p = Path(fname)
+        if p.exists():
+            stat = p.stat()
+            out.append({
+                "label": label,
+                "filename": fname,
+                "exists": True,
+                "size_bytes": stat.st_size,
+                "mtime": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+            })
+        else:
+            out.append({
+                "label": label,
+                "filename": fname,
+                "exists": False,
+                "size_bytes": 0,
+                "mtime": None,
+            })
+    return {"files": out}
 
 
 # =====================================================================

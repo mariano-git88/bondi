@@ -66,8 +66,19 @@ html, body, [data-testid="stAppViewContainer"], [class*="css"] {{
     -moz-osx-font-smoothing: grayscale;
 }}
 
-[data-testid="stAppViewContainer"] {{
-    background-color: {WHITE};
+/* Fondo blanco en TODO el área principal. Streamlit pone el color de
+   fondo en varios wrappers según versión; los apuntamos a todos con
+   !important para ganar siempre. */
+html, body,
+[data-testid="stApp"],
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+section[data-testid="stMain"],
+.main,
+.main > div,
+.stMain,
+[data-testid="stHeader"] {{
+    background-color: {WHITE} !important;
 }}
 
 /* ----- Headings ----- */
@@ -442,7 +453,7 @@ header [data-testid="stDecoration"] {{ display: none; }}
     padding-left: 3rem !important;
     padding-right: 3rem !important;
     max-width: 1240px;
-    background-color: {WHITE};
+    background-color: {WHITE} !important;
 }}
 
 /* Texto fuerte un pelín más oscuro */

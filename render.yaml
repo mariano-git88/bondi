@@ -73,11 +73,9 @@ services:
         value: "3.12"
       - key: BONDI_ADMIN_PASS
         sync: false
-      # URL del backend al que pega kitchen. Render la inyecta sola
-      # desde el otro service para que apunten bien aunque cambien
-      # los hostnames.
+      # URL pública del backend (no internal hostport). Apunta al
+      # custom domain bondi.suprabond.ai por defecto, ruteado vía el
+      # edge SSL de Render. Si en el futuro cambia el dominio,
+      # actualizar acá o editar la env var en el dashboard.
       - key: BONDI_BACKEND_URL
-        fromService:
-          type: web
-          name: bondi-api
-          property: hostport
+        value: https://bondi.suprabond.ai

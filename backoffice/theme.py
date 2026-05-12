@@ -305,12 +305,12 @@ section[data-testid="stSidebar"],
 [data-testid="stTabs"] button[role="tab"] {{
     flex: 1 1 0 !important;
     min-width: 0 !important;
-    padding: 0.6rem 0.7rem !important;
+    padding: 0.5rem 0.45rem !important;
     background-color: {WHITE} !important;
     border-radius: 10px 10px 0 0 !important;
     color: {TEXT_SOFT} !important;
     font-weight: 500 !important;
-    font-size: 0.92rem !important;
+    font-size: 0.82rem !important;
     letter-spacing: 0.01em;
     border: none !important;
     border-bottom: 3px solid transparent !important;
@@ -318,6 +318,21 @@ section[data-testid="stSidebar"],
     text-align: center;
     justify-content: center;
     transition: background-color 0.15s ease, color 0.15s ease;
+    white-space: nowrap;
+}}
+/* En pantallas chicas (<1100px), achicar todavía más para que entren */
+@media (max-width: 1100px) {{
+    [data-testid="stTabs"] button[role="tab"] {{
+        font-size: 0.74rem !important;
+        padding: 0.45rem 0.3rem !important;
+    }}
+}}
+/* Inner span/p del label tampoco quiere wraplear */
+[data-testid="stTabs"] button[role="tab"] p,
+[data-testid="stTabs"] button[role="tab"] span {{
+    white-space: nowrap !important;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }}
 [data-testid="stTabs"] button[role="tab"]:hover {{
     color: {INK} !important;

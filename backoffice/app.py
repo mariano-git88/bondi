@@ -50,20 +50,30 @@ import theme  # noqa: E402
 import tutorial  # noqa: E402
 
 def _normalize_backend_url(raw: str) -> str:
-    """Acepta URLs con o sin protocolo. Si no tiene http(s)://, asume https.
+    """Acepta URLs con o sin protocolo y elige http/https según el caso.
 
-    Necesario porque Render `fromService.property: hostport` devuelve
-    'bondi-api-xxx:10000' (sin protocolo) y httpx requiere protocolo
-    explícito.
+    Reglas:
+      - URL completa (con protocolo) → se devuelve tal cual.
+      - Vacío → default localhost.
+      - localhost / IP privada → http.
+      - Hostname Render internal (sin TLD: 'bondi-api-xxx:10000') → http
+        (la terminación SSL la hace el edge de Render, no los services
+        entre sí).
+      - Dominio público (con TLD: 'bondi.suprabond.ai') → https.
     """
     raw = (raw or "").strip().rstrip("/")
     if not raw:
         return "http://localhost:8000"
     if raw.startswith(("http://", "https://")):
         return raw
-    # Si parece localhost o IP local sin protocolo → http.
-    if raw.startswith(("localhost", "127.", "0.0.0.0", "172.")):
+    # localhost / IPs privadas → http
+    if raw.startswith(("localhost", "127.", "0.0.0.0", "172.", "192.168.", "10.")):
         return f"http://{raw}"
+    # Hostport interno Render: hostname sin '.' (sin TLD) → http plano
+    host_part = raw.split("/")[0].split(":")[0]
+    if "." not in host_part:
+        return f"http://{raw}"
+    # Dominio público con TLD → https
     return f"https://{raw}"
 
 

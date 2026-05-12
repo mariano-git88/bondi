@@ -49,7 +49,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import theme  # noqa: E402
 import tutorial  # noqa: E402
 
-BACKEND_URL_DEFAULT = os.environ.get("BONDI_BACKEND_URL", "http://localhost:8000")
+def _normalize_backend_url(raw: str) -> str:
+    """Acepta URLs con o sin protocolo. Si no tiene http(s)://, asume https.
+
+    Necesario porque Render `fromService.property: hostport` devuelve
+    'bondi-api-xxx:10000' (sin protocolo) y httpx requiere protocolo
+    explícito.
+    """
+    raw = (raw or "").strip().rstrip("/")
+    if not raw:
+        return "http://localhost:8000"
+    if raw.startswith(("http://", "https://")):
+        return raw
+    # Si parece localhost o IP local sin protocolo → http.
+    if raw.startswith(("localhost", "127.", "0.0.0.0", "172.")):
+        return f"http://{raw}"
+    return f"https://{raw}"
+
+
+BACKEND_URL_DEFAULT = _normalize_backend_url(
+    os.environ.get("BONDI_BACKEND_URL", "http://localhost:8000")
+)
 
 
 # =====================================================================
@@ -180,7 +200,8 @@ def _show_tutorial_dialog():
 
 st.sidebar.caption("Backoffice operativo de Bondi")
 
-backend_url = st.sidebar.text_input("Backend URL", value=BACKEND_URL_DEFAULT)
+_raw_backend = st.sidebar.text_input("Backend URL", value=BACKEND_URL_DEFAULT)
+backend_url = _normalize_backend_url(_raw_backend)
 pwd = st.sidebar.text_input("Password (BONDI_ADMIN_PASS)", type="password", key="auth_pwd")
 
 if not pwd:

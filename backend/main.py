@@ -33,6 +33,7 @@ import os
 import secrets
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -111,6 +112,84 @@ def _load_curation() -> None:
              f"faqs={len(_curation.get('faqs') or [])}")
 
 
+def _ensure_curation_seed() -> None:
+    """Si `data/curation.json` no existe (primer arranque sobre disk fresh
+    o post-rotate), copiar el seed empacado en `backend/default_curation.json`.
+    Eso garantiza que el agent siempre tenga hard rules + FAQs base."""
+    target = Path("data/curation.json")
+    if target.exists():
+        return
+    seed = Path(__file__).resolve().parent / "default_curation.json"
+    if not seed.exists():
+        log.warning(
+            "No existe data/curation.json ni backend/default_curation.json — "
+            "el agent va a arrancar sin reglas hasta que se cargue manualmente."
+        )
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(seed.read_text(encoding="utf-8"), encoding="utf-8")
+    log.info(f"Seed inicial copiado: {seed} → {target}")
+
+
+def _auto_seed_corpus_if_needed() -> None:
+    """Si `data/products.faiss` NO existe (disk fresh o data perdida) y hay
+    OPENAI_API_KEY disponible, disparar pipeline de seed en un thread
+    background: ingest_shopify → ingest_web → build_index → reload engine.
+
+    NO bloquea el startup. El healthcheck pasa de inmediato; el corpus se
+    va llenando en paralelo (~3-5 min). Mientras tanto `/chat` devolverá
+    503 (engine no inicializado), aceptable para arranque cold."""
+    faiss_path = Path("data/products.faiss")
+    if faiss_path.exists():
+        return
+    if not os.environ.get("OPENAI_API_KEY"):
+        log.warning(
+            "Auto-seed skip: data/products.faiss no existe y OPENAI_API_KEY "
+            "tampoco. Levantá las env vars y reiniciá para auto-seed."
+        )
+        return
+
+    log.warning(
+        "data/products.faiss no existe — disparando auto-seed en background. "
+        "El backend va a arrancar OK pero /chat va a fallar hasta que termine."
+    )
+
+    def _seed_worker():
+        steps = [
+            ("ingest_shopify", [sys.executable, "ingestion/ingest_shopify.py"], 180),
+            ("ingest_web depth=1 max=50", [
+                sys.executable, "-m", "ingestion.ingest_web",
+                "--depth", "1", "--max-pages", "50",
+            ], 300),
+            ("build_index", [sys.executable, "-m", "embeddings.build_index"], 300),
+        ]
+        for name, cmd, timeout in steps:
+            log.info(f"[auto-seed] {name} (timeout {timeout}s)...")
+            try:
+                proc = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=timeout, check=False
+                )
+                if proc.returncode != 0:
+                    log.error(
+                        f"[auto-seed] {name} falló rc={proc.returncode}: "
+                        f"{(proc.stderr or '')[-500:]}"
+                    )
+                    return
+                log.info(f"[auto-seed] {name}: OK")
+            except subprocess.TimeoutExpired:
+                log.error(f"[auto-seed] {name} timed out > {timeout}s")
+                return
+            except Exception as exc:
+                log.exception(f"[auto-seed] {name} excepción: {exc}")
+                return
+
+        log.info("[auto-seed] terminado — recargando engine + products.")
+        _load_products()
+        _load_engine()
+
+    threading.Thread(target=_seed_worker, name="auto-seed", daemon=True).start()
+
+
 @app.on_event("startup")
 def _startup():
     global _anthropic_api_key, _admin_pass
@@ -127,9 +206,11 @@ def _startup():
         log.warning("BONDI_ADMIN_PASS no configurado — usando default inseguro 'admin'.")
 
     db.init_db()
+    _ensure_curation_seed()
     _load_products()
     _load_engine()
     _load_curation()
+    _auto_seed_corpus_if_needed()
 
 
 def _check_admin(token: str | None) -> None:

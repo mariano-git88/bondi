@@ -160,6 +160,7 @@ class FeedbackRequest(BaseModel):
     rating: str  # 'good', 'bad', 'flag'
     note: str | None = None
     operator: str | None = None
+    suggested_answer: str | None = None  # "Cómo hubiera respondido el operador"
 
 
 class PublicFeedbackRequest(BaseModel):
@@ -330,6 +331,7 @@ def admin_feedback(req: FeedbackRequest, x_admin_token: str | None = Header(None
         rating=req.rating,
         note=req.note,
         operator=req.operator,
+        suggested_answer=req.suggested_answer,
     )
     return {"feedback_id": feedback_id}
 

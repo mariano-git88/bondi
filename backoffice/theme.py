@@ -122,10 +122,24 @@ p, div, span, li {{
     padding-bottom: 0.5rem !important;
 }}
 
-/* ----- Sidebar warm ----- */
-[data-testid="stSidebar"] {{
-    background-color: {WHITE};
-    border-right: 1px solid {LINE};
+/* ----- Sidebar cremita (yellow-soft del logo) -----
+   Streamlit cambia el selector entre versiones; usamos varios + !important
+   en cada uno para asegurar el fondo en todas. ----- */
+[data-testid="stSidebar"],
+section[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebar"] > div:first-child,
+[data-testid="stSidebarContent"],
+[data-testid="stSidebarUserContent"] {{
+    background-color: {YELLOW_SOFT} !important;
+    border-right: 1px solid {LINE_STRONG} !important;
+}}
+/* Inputs dentro del sidebar mantienen fondo blanco para contraste */
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input,
+[data-testid="stSidebar"] .stTextArea textarea,
+[data-testid="stSidebar"] div[data-baseweb="select"] > div {{
+    background-color: {WHITE} !important;
 }}
 [data-testid="stSidebar"] h2 {{
     border: none !important;
@@ -386,12 +400,40 @@ hr {{
     border-radius: 10px !important;
 }}
 
-/* ----- Hide Streamlit chrome ----- */
+/* ----- Hide Streamlit chrome -----
+   Ocultamos solo decoraciones cosméticas. NO ocultar el header ni el
+   toolbar entero: el botón para reabrir el sidebar colapsado vive ahí
+   y necesita seguir visible. ----- */
 #MainMenu {{ visibility: hidden; }}
 footer {{ visibility: hidden; }}
-[data-testid="stToolbar"] {{ visibility: hidden; }}
 header [data-testid="stDecoration"] {{ display: none; }}
-header {{ background-color: transparent !important; }}
+/* Ocultar el botón "Deploy" arriba-derecha (sólo ese, no todo el toolbar). */
+[data-testid="stToolbarActions"] {{ visibility: hidden; }}
+
+/* Asegurar que el control para re-expandir el sidebar SIEMPRE sea
+   visible cuando el sidebar está colapsado. Streamlit usa varios
+   nombres distintos según versión, los apuntamos todos. */
+[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"],
+[data-testid="stSidebarCollapseButton"] {{
+    visibility: visible !important;
+    display: flex !important;
+    opacity: 1 !important;
+    background-color: {WHITE} !important;
+    border: 1px solid {LINE_STRONG} !important;
+    border-radius: 8px !important;
+    box-shadow: 0 1px 3px rgba(42, 36, 34, 0.08) !important;
+    z-index: 999 !important;
+}}
+[data-testid="stSidebarCollapsedControl"] button,
+[data-testid="collapsedControl"] button {{
+    color: {INK} !important;
+}}
+[data-testid="stSidebarCollapsedControl"]:hover,
+[data-testid="collapsedControl"]:hover {{
+    background-color: {YELLOW_SOFT} !important;
+    border-color: {YELLOW} !important;
+}}
 
 /* ----- Container principal ----- */
 [data-testid="stAppViewContainer"] > .main > .block-container {{

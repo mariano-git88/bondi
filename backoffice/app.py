@@ -57,7 +57,7 @@ BACKEND_URL_DEFAULT = os.environ.get("BONDI_BACKEND_URL", "http://localhost:8000
 # =====================================================================
 
 st.set_page_config(
-    page_title="Bondi — Kitchen",
+    page_title="Bondi — Backoffice",
     page_icon="🤖",
     layout="wide",
 )
@@ -177,7 +177,6 @@ def _show_tutorial_dialog():
 # Auth gate (password compartida con el backend via X-Admin-Token)
 # =====================================================================
 
-st.sidebar.title("Kitchen")
 st.sidebar.caption("Backoffice operativo de Bondi")
 
 backend_url = st.sidebar.text_input("Backend URL", value=BACKEND_URL_DEFAULT)
@@ -207,7 +206,7 @@ operator = st.sidebar.text_input("Operador (para feedback)", value="anon")
 
 _col_title, _col_btn = st.columns([5, 1], vertical_alignment="center")
 with _col_title:
-    st.title("Kitchen — Bondi")
+    st.title("Bondi")
     st.caption(
         f"Backend: `{backend_url}` · Editá hard rules, FAQs, PDFs y revisá conversaciones reales. "
         "Si es tu primera vez, abrí el tutorial."
@@ -221,8 +220,7 @@ with _col_btn:
 # Tabs
 # =====================================================================
 
-tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_test, tab_salud = st.tabs([
-    "📊 Resumen",
+tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_test, tab_salud = st.tabs([
     "💬 Conversaciones",
     "📋 FAQs",
     "⚖️ Reglas",
@@ -234,57 +232,47 @@ tab_dash, tab_chats, tab_faqs, tab_rules, tab_pdfs, tab_web, tab_index, tab_test
 ])
 
 
-# ---------- Resumen ----------
-with tab_dash:
-    st.header("Resumen")
-    ok, stats = api_get(backend_url, admin_token, "/admin/db/stats")
-    if ok and isinstance(stats, dict):
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Turns", stats.get("turns", 0))
-        col2.metric("Sesiones", stats.get("sessions", 0))
-        col3.metric("👍 Good", stats.get("feedback_good", 0))
-        col4.metric("👎 Bad", stats.get("feedback_bad", 0))
-    else:
-        st.warning(f"No pude leer stats: {stats}")
+_RATING_EMOJI = {"good": "👍", "bad": "👎", "flag": "🚩"}
 
-    ok_cur, cur = api_get(backend_url, admin_token, "/admin/curation")
-    if ok_cur and isinstance(cur, dict):
-        st.markdown("### Curaduría")
-        cc1, cc2, cc3 = st.columns(3)
-        cc1.metric("Hard rules", len(cur.get("hard_rules") or []))
-        cc2.metric("FAQs", len(cur.get("faqs") or []))
-        cc3.metric("Versión", cur.get("version") or 0)
+
+def _emoji_or_dash(rating):
+    return _RATING_EMOJI.get(rating or "", "—")
 
 
 # ---------- Conversaciones ----------
 with tab_chats:
     st.header("Conversaciones")
+    st.caption(
+        "Cada fila es una pregunta + respuesta del chat público. Tu trabajo: leer las "
+        "conversaciones, calificarlas y escribir 'cómo hubieras respondido vos' para que "
+        "Bondi mejore. Filtrá por 'Sin revisar' para ver lo pendiente."
+    )
 
-    # Filtros en una fila.
-    fcol1, fcol2, fcol3, fcol4 = st.columns([1, 1, 2, 1])
+    # ---- Filtros ----
+    fcol1, fcol2, fcol3, fcol4 = st.columns([1, 1.5, 1.4, 1.2])
     with fcol1:
         limit = st.number_input("Límite", 10, 1000, 100, 10)
     with fcol2:
-        rating_filter = st.selectbox(
-            "Rating",
-            ["todos", "good", "bad", "flag", "sin feedback"],
-            index=0,
-        )
+        rating_label_to_value = {
+            "Todos": "todos",
+            "🔍 Sin revisar (operador)": "unreviewed",
+            "Sin ningún feedback": "none",
+            "👍 Buenas (operador)": "good",
+            "👎 Malas (operador)": "bad",
+            "🚩 Flag (operador)": "flag",
+            "👍 público": "public_good",
+            "👎 público": "public_bad",
+        }
+        rating_label = st.selectbox("Filtrar por", list(rating_label_to_value.keys()), index=1)
+        rating_filter = rating_label_to_value[rating_label]
     with fcol3:
         from datetime import date as _date, timedelta as _td
-        since_date = st.date_input(
-            "Desde",
-            value=_date.today() - _td(days=30),
-            help="Solo turns posteriores a esta fecha (00:00 UTC).",
-        )
+        since_date = st.date_input("Desde", value=_date.today() - _td(days=30))
     with fcol4:
-        session_filter = st.text_input("Session ID (parcial OK)", value="")
+        session_filter = st.text_input("Session ID", value="", placeholder="parcial OK")
 
-    # Armar query string.
     params = [f"limit={int(limit)}"]
-    if rating_filter == "sin feedback":
-        params.append("rating=none")
-    elif rating_filter != "todos":
+    if rating_filter != "todos":
         params.append(f"rating={rating_filter}")
     if since_date:
         params.append(f"since={since_date.isoformat()}T00:00:00")
@@ -299,20 +287,27 @@ with tab_chats:
     else:
         df = pd.DataFrame([
             {
-                "turn_id": r["turn_id"],
-                "ts": r["ts"],
-                "session": (r["session_id"] or "")[:8],
-                "user_msg": (r["user_msg"] or "")[:80],
-                "assistant_msg": (r["assistant_msg"] or "")[:80],
-                "rating": r.get("last_rating") or "—",
-                "feedback_count": r.get("feedback_count") or 0,
+                "ID": r["turn_id"],
+                "Cuándo": (r["ts"] or "")[:16].replace("T", " "),
+                "Pregunta del usuario": (r["user_msg"] or "")[:100],
+                "Resumen de la respuesta": (r["assistant_msg"] or "")[:100],
+                "Revisada": "✓" if r.get("reviewed_by_operator") else "—",
+                "Tu rating": _emoji_or_dash(r.get("last_operator_rating")),
+                "Rating del público": _emoji_or_dash(r.get("last_public_rating")),
             }
             for r in rows
         ])
-        st.markdown(f"**{len(df)} conversaciones**")
-        st.dataframe(df, use_container_width=True, hide_index=True)
+        st.markdown(f"**{len(df)} conversaciones** · clickeá una fila para abrir el formulario de revisión abajo")
+        df_event = st.dataframe(
+            df,
+            use_container_width=True,
+            hide_index=True,
+            selection_mode="single-row",
+            on_select="rerun",
+            key="conv_dataframe",
+        )
 
-        # Export CSV de lo filtrado (más detalle que la tabla visible).
+        # Export CSV con todos los detalles.
         export_df = pd.DataFrame([
             {
                 "turn_id": r["turn_id"],
@@ -320,7 +315,9 @@ with tab_chats:
                 "session_id": r["session_id"],
                 "user_msg": r["user_msg"],
                 "assistant_msg": r["assistant_msg"],
-                "rating": r.get("last_rating") or "",
+                "reviewed_by_operator": r.get("reviewed_by_operator"),
+                "last_operator_rating": r.get("last_operator_rating") or "",
+                "last_public_rating": r.get("last_public_rating") or "",
                 "feedback_count": r.get("feedback_count") or 0,
                 "hard_rules_version": r.get("hard_rules_version"),
             }
@@ -335,52 +332,132 @@ with tab_chats:
         )
 
         st.divider()
-        sel = st.number_input("Ver detalle de turn_id", min_value=0, step=1, value=0)
+
+        selected_rows = df_event.selection.rows if df_event and df_event.selection else []
+        if not selected_rows:
+            st.info("👆 Clickeá una fila de la tabla de arriba para abrir su formulario de revisión.")
+            sel = 0
+        else:
+            sel = int(df.iloc[selected_rows[0]]["ID"])
+            st.markdown(f"### Revisando conversación #{sel}")
+
         if sel and sel > 0:
             ok_t, t = api_get(backend_url, admin_token, f"/admin/turn/{int(sel)}")
             if not ok_t:
-                st.error(f"No existe ese turn_id ({t})")
+                st.error(f"No existe ese ID ({t})")
             else:
-                st.markdown(f"**Sesión**: `{t['session_id']}`  |  **Timestamp**: `{t['ts']}`")
-                st.markdown("#### 👤 User")
-                st.code(t["user_msg"], language="markdown")
-                st.markdown("#### 🤖 Assistant")
-                st.code(t["assistant_msg"], language="markdown")
+                st.markdown(
+                    f"<div style='color:#8B7E73;font-size:12px;margin-bottom:14px;'>"
+                    f"Sesión <code>{t['session_id']}</code> · {t['ts']}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+                col_u, col_a = st.columns(2)
+                with col_u:
+                    st.markdown("**👤 Pregunta del usuario**")
+                    st.markdown(
+                        f"<div style='background:#FFF4C9;border:1px solid #EFE6D8;"
+                        f"border-radius:12px;padding:14px 16px;font-size:14.5px;line-height:1.55;'>"
+                        f"{(t['user_msg'] or '').replace(chr(10), '<br>')}</div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_a:
+                    st.markdown("**🤖 Respuesta de Bondi**")
+                    st.markdown(
+                        f"<div style='background:#FFFFFF;border:1px solid #EFE6D8;"
+                        f"border-radius:12px;padding:14px 16px;font-size:14.5px;line-height:1.55;'>"
+                        f"{(t['assistant_msg'] or '').replace(chr(10), '<br>')}</div>",
+                        unsafe_allow_html=True,
+                    )
 
                 import json as _json
                 tool_calls = _json.loads(t.get("tool_calls_json") or "[]")
                 if tool_calls:
-                    with st.expander(f"🔧 Tool calls ({len(tool_calls)})"):
+                    with st.expander(f"🔧 Tool calls del modelo ({len(tool_calls)})"):
                         st.json(tool_calls)
 
-                st.markdown("#### Feedback")
-                fb_col1, fb_col2, fb_col3 = st.columns(3)
-                with fb_col1:
-                    if st.button("👍 Good", key=f"good_{sel}"):
-                        api_post(backend_url, admin_token, "/admin/feedback",
-                                 json={"turn_id": int(sel), "rating": "good", "operator": operator})
-                        st.success("Guardado 👍")
-                with fb_col2:
-                    if st.button("👎 Bad", key=f"bad_{sel}"):
-                        api_post(backend_url, admin_token, "/admin/feedback",
-                                 json={"turn_id": int(sel), "rating": "bad", "operator": operator})
-                        st.success("Guardado 👎")
-                with fb_col3:
-                    if st.button("🚩 Flag", key=f"flag_{sel}"):
-                        api_post(backend_url, admin_token, "/admin/feedback",
-                                 json={"turn_id": int(sel), "rating": "flag", "operator": operator})
-                        st.success("Flag agregado 🚩")
+                st.markdown("### ✍️ Calificá esta respuesta")
+                st.caption(
+                    "Lo que escribas en 'Cómo hubieras respondido vos' queda guardado como "
+                    "respuesta de referencia. En el futuro podemos convertir estas en FAQs "
+                    "automáticamente o usarlas como contexto al modelo."
+                )
 
-                note = st.text_area("Nota (opcional)", key=f"note_{sel}", height=100)
-                if st.button("Guardar nota", key=f"savenote_{sel}") and note.strip():
-                    api_post(backend_url, admin_token, "/admin/feedback",
-                             json={"turn_id": int(sel), "rating": "flag",
-                                   "note": note.strip(), "operator": operator})
-                    st.success("Nota guardada.")
+                with st.form(key=f"review_form_{sel}", clear_on_submit=False):
+                    rating_pick = st.radio(
+                        "¿Cómo evaluás la respuesta?",
+                        options=["good", "bad", "flag"],
+                        format_func=lambda r: {
+                            "good": "👍 Buena — el modelo respondió bien",
+                            "bad": "👎 Mala — error o no responde lo que se preguntó",
+                            "flag": "🚩 Problemática — riesgo, invención o tema delicado",
+                        }[r],
+                        key=f"rating_pick_{sel}",
+                    )
+                    suggested = st.text_area(
+                        "✏️ Cómo hubieras respondido vos",
+                        height=180,
+                        key=f"suggested_{sel}",
+                        placeholder="(Opcional pero MUY recomendado.) Escribí la respuesta que "
+                                    "el modelo debería haber dado. Esto sirve para que Bondi mejore.",
+                    )
+                    note_in = st.text_area(
+                        "Nota corta interna",
+                        height=80,
+                        key=f"note_in_{sel}",
+                        placeholder="Notas para el equipo (no se ven en el chat). Ej: 'no llamó "
+                                    "search_knowledge, debería'",
+                    )
+                    submitted = st.form_submit_button("💾 Guardar calificación", type="primary")
+                    if submitted:
+                        ok_sv, msg_sv = api_post(
+                            backend_url, admin_token, "/admin/feedback",
+                            json={
+                                "turn_id": int(sel),
+                                "rating": rating_pick,
+                                "note": note_in.strip() or None,
+                                "operator": operator,
+                                "suggested_answer": suggested.strip() or None,
+                            },
+                        )
+                        if ok_sv:
+                            st.success(f"Guardado como **{operator}**. Refrescá para ver el listado actualizado.")
+                        else:
+                            st.error(f"Falló: {msg_sv}")
 
+                # Historial de feedback ya cargado en este turn.
                 if t.get("feedback"):
-                    st.markdown("#### Historial de feedback")
-                    st.dataframe(pd.DataFrame(t["feedback"]), hide_index=True)
+                    st.markdown("### Historial de feedback de este turn")
+                    for fb in t["feedback"]:
+                        op = fb.get("operator") or "—"
+                        rating = fb.get("rating") or ""
+                        emoji = _RATING_EMOJI.get(rating, "")
+                        is_public = op == "public"
+                        bg = "#EFF6FF" if is_public else "#FFF4C9"
+                        st.markdown(
+                            f"<div style='background:{bg};border:1px solid #EFE6D8;"
+                            f"border-radius:10px;padding:10px 14px;margin-bottom:8px;font-size:13.5px;'>"
+                            f"<b>{emoji} {rating}</b> · <code>{op}</code> · "
+                            f"<span style='color:#8B7E73;'>{(fb.get('ts') or '')[:16].replace('T',' ')}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True,
+                        )
+                        if fb.get("suggested_answer"):
+                            st.markdown(
+                                f"<div style='margin:-4px 0 8px 14px;padding:10px 14px;"
+                                f"background:#FFFAF0;border-left:3px solid #C8552F;"
+                                f"border-radius:0 8px 8px 0;font-size:13.5px;'>"
+                                f"<b>Respuesta sugerida:</b><br>"
+                                f"<i style='color:#4D4540;'>{fb['suggested_answer'].replace(chr(10), '<br>')}</i>"
+                                f"</div>",
+                                unsafe_allow_html=True,
+                            )
+                        if fb.get("note"):
+                            st.markdown(
+                                f"<div style='margin:-4px 0 14px 14px;color:#8B7E73;font-size:12.5px;'>"
+                                f"📝 {fb['note']}</div>",
+                                unsafe_allow_html=True,
+                            )
 
 
 # ---------- FAQs ----------

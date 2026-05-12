@@ -64,11 +64,17 @@ def init_db() -> None:
                 rating TEXT NOT NULL,
                 note TEXT,
                 operator TEXT,
+                suggested_answer TEXT,
                 FOREIGN KEY(turn_id) REFERENCES conversations(turn_id) ON DELETE CASCADE
             );
             CREATE INDEX IF NOT EXISTS idx_feedback_turn ON feedback(turn_id);
             """
         )
+        # Migración idempotente: si la tabla ya existía sin suggested_answer
+        # (DBs creadas antes de esta release), agregamos la columna.
+        cols = {row["name"] for row in conn.execute("PRAGMA table_info(feedback)").fetchall()}
+        if "suggested_answer" not in cols:
+            conn.execute("ALTER TABLE feedback ADD COLUMN suggested_answer TEXT")
 
 
 def _now() -> str:
@@ -107,18 +113,30 @@ def list_recent_turns(
     rating: str | None = None,
     since_iso: str | None = None,
 ) -> list[dict]:
-    """Lista turns con conteo de feedback + último rating.
+    """Lista turns con métricas de feedback útiles para el panel.
+
+    Columnas que devuelve (además de las de `conversations`):
+      feedback_count           — total de feedbacks (operador + público).
+      public_feedback_count    — solo del público (operator='public').
+      operator_feedback_count  — solo del operador (operator!='public').
+      last_operator_rating     — última rating de un operador, o NULL.
+      last_public_rating       — última rating del público, o NULL.
+      reviewed_by_operator     — 1 si tiene al menos un feedback de operador.
 
     Filtros opcionales:
-      session_id — solo turns de esa sesión.
-      rating     — 'good' | 'bad' | 'flag' | 'none' (sin feedback).
+      session_id — solo turns de esa sesión (match parcial con LIKE).
       since_iso  — solo turns con ts >= since_iso (ISO 8601 string).
+      rating     — uno de:
+                   'good' | 'bad' | 'flag' (último rating de operador)
+                   'public_good' | 'public_bad' (último rating de público)
+                   'unreviewed' (sin feedback de operador todavía)
+                   'none' (sin feedback de nadie).
     """
     clauses = []
     params: list = []
     if session_id:
-        clauses.append("c.session_id = ?")
-        params.append(session_id)
+        clauses.append("c.session_id LIKE ?")
+        params.append(f"%{session_id}%")
     if since_iso:
         clauses.append("c.ts >= ?")
         params.append(since_iso)
@@ -127,9 +145,15 @@ def list_recent_turns(
     sql = f"""
         SELECT c.*,
                COUNT(f.feedback_id) AS feedback_count,
+               SUM(CASE WHEN f.operator = 'public' THEN 1 ELSE 0 END) AS public_feedback_count,
+               SUM(CASE WHEN f.operator IS NOT NULL AND f.operator <> 'public' THEN 1 ELSE 0 END) AS operator_feedback_count,
                (SELECT rating FROM feedback f2
                 WHERE f2.turn_id = c.turn_id
-                ORDER BY f2.ts DESC LIMIT 1) AS last_rating
+                  AND f2.operator IS NOT NULL AND f2.operator <> 'public'
+                ORDER BY f2.ts DESC LIMIT 1) AS last_operator_rating,
+               (SELECT rating FROM feedback f3
+                WHERE f3.turn_id = c.turn_id AND f3.operator = 'public'
+                ORDER BY f3.ts DESC LIMIT 1) AS last_public_rating
         FROM conversations c
         LEFT JOIN feedback f ON f.turn_id = c.turn_id
         {where}
@@ -138,16 +162,27 @@ def list_recent_turns(
 
     if rating == "none":
         sql += " HAVING feedback_count = 0"
+    elif rating == "unreviewed":
+        sql += " HAVING operator_feedback_count = 0"
     elif rating in ("good", "bad", "flag"):
-        sql += " HAVING last_rating = ?"
+        sql += " HAVING last_operator_rating = ?"
         params.append(rating)
+    elif rating == "public_good":
+        sql += " HAVING last_public_rating = 'good'"
+    elif rating == "public_bad":
+        sql += " HAVING last_public_rating = 'bad'"
 
     sql += " ORDER BY c.ts DESC LIMIT ?"
     params.append(limit)
 
     with _lock, _connect() as conn:
         rows = conn.execute(sql, params).fetchall()
-        return [dict(r) for r in rows]
+        result = []
+        for r in rows:
+            d = dict(r)
+            d["reviewed_by_operator"] = (d.get("operator_feedback_count") or 0) > 0
+            result.append(d)
+        return result
 
 
 def get_turn(turn_id: int) -> dict | None:
@@ -170,14 +205,15 @@ def save_feedback(
     rating: str,
     note: str | None = None,
     operator: str | None = None,
+    suggested_answer: str | None = None,
 ) -> int:
     if rating not in ("good", "bad", "flag"):
         raise ValueError(f"Rating inválido: {rating}")
     with _lock, _connect() as conn:
         cur = conn.execute(
-            """INSERT INTO feedback (turn_id, ts, rating, note, operator)
-               VALUES (?, ?, ?, ?, ?)""",
-            (turn_id, _now(), rating, note, operator),
+            """INSERT INTO feedback (turn_id, ts, rating, note, operator, suggested_answer)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (turn_id, _now(), rating, note, operator, suggested_answer),
         )
         return cur.lastrowid
 

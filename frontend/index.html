@@ -62,30 +62,11 @@
     header .brand {
       display: flex;
       align-items: center;
-      gap: 14px;
     }
     header .brand img {
-      height: 48px;
-      width: 48px;
+      height: 52px;
+      width: 52px;
       flex-shrink: 0;
-    }
-    header .brand-text {
-      display: flex;
-      flex-direction: column;
-      line-height: 1.15;
-    }
-    header h1 {
-      margin: 0;
-      font-size: 22px;
-      font-weight: 700;
-      letter-spacing: -0.02em;
-      color: var(--ink);
-    }
-    header .subtitle {
-      font-weight: 400;
-      color: var(--text-soft);
-      font-size: 12.5px;
-      letter-spacing: 0.01em;
     }
     header button {
       background: transparent;
@@ -325,25 +306,121 @@
       text-align: center;
       line-height: 1.5;
     }
+
+    /* ----- Disclaimer modal (overlay obligatorio) ----- */
+    .disclaimer-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(42, 36, 34, 0.45);
+      backdrop-filter: blur(4px);
+      -webkit-backdrop-filter: blur(4px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+      padding: 20px;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .disclaimer-overlay[hidden] {
+      display: none;
+    }
+    .disclaimer-overlay.fading-out {
+      animation: fadeOut 0.25s ease-in forwards;
+    }
+    .disclaimer-card {
+      background: var(--bg-card);
+      border-radius: 18px;
+      padding: 32px 28px 28px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 16px 48px rgba(42, 36, 34, 0.18);
+      animation: slideUp 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .disclaimer-logo {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 14px;
+      display: block;
+    }
+    .disclaimer-card h2 {
+      margin: 0 0 12px 0;
+      font-size: 20px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      color: var(--ink);
+    }
+    .disclaimer-card p {
+      margin: 0 0 22px 0;
+      font-size: 14.5px;
+      line-height: 1.6;
+      color: var(--ink-soft);
+    }
+    .disclaimer-card button {
+      background: var(--orange);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 24px;
+      font-size: 14.5px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      transition: background 0.15s, transform 0.1s, box-shadow 0.15s;
+      box-shadow: 0 2px 6px rgba(200, 85, 47, 0.22);
+    }
+    .disclaimer-card button:hover {
+      background: var(--orange-dark);
+      transform: translateY(-1px);
+      box-shadow: 0 6px 14px rgba(200, 85, 47, 0.32);
+    }
+    .disclaimer-card button:active {
+      transform: translateY(0);
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes fadeOut {
+      from { opacity: 1; }
+      to { opacity: 0; }
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
     @media (max-width: 600px) {
       .bubble { max-width: 92%; }
       header .brand img { height: 40px; width: 40px; }
-      header h1 { font-size: 19px; }
       .empty-state h2 { font-size: 22px; }
+      .disclaimer-card { padding: 26px 22px 22px; }
+      .disclaimer-logo { width: 60px; height: 60px; }
     }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <img src="logo.png" alt="Suprabond">
-      <div class="brand-text">
-        <h1>Bondi</h1>
-        <span class="subtitle">Asistente de Suprabond, Bulit y Somerset</span>
-      </div>
+      <img src="logo.png" alt="Bondi">
     </div>
     <button id="resetBtn">Limpiar</button>
   </header>
+
+  <!-- Modal de disclaimer obligatorio. Bloquea la app hasta que el
+       usuario acepta. Una vez aceptado, se guarda flag en localStorage
+       y no vuelve a aparecer en ese device. -->
+  <div id="disclaimerOverlay" class="disclaimer-overlay" hidden>
+    <div class="disclaimer-card" role="dialog" aria-modal="true" aria-labelledby="disclaimerTitle">
+      <img src="logo.png" alt="" class="disclaimer-logo">
+      <h2 id="disclaimerTitle">Antes de empezar</h2>
+      <p>
+        Las recomendaciones son orientativas. Para uso técnico dedicado
+        consultá siempre la ficha técnica del producto.
+      </p>
+      <button id="disclaimerAccept" type="button">Aceptar y continuar</button>
+    </div>
+  </div>
 
   <main id="messages">
     <div class="empty-state" id="emptyState">
@@ -364,9 +441,6 @@
     <div class="input-row">
       <textarea id="input" placeholder="Escribí tu pregunta..." rows="1"></textarea>
       <button id="sendBtn">Enviar</button>
-    </div>
-    <div class="disclaimer">
-      Las recomendaciones son orientativas — para uso técnico delicado, consultá siempre la ficha técnica del producto y/o un profesional.
     </div>
   </footer>
 
@@ -610,8 +684,48 @@
       }
     });
 
+    // ============================================================
+    // Disclaimer modal — obligatorio antes del primer uso.
+    // Se guarda flag en localStorage para no volver a mostrarlo en
+    // ese device. Versión del disclaimer en la key, así si en el
+    // futuro cambiamos el texto y queremos volver a pedir consent,
+    // bumpeamos la versión.
+    // ============================================================
+    const DISCLAIMER_KEY = "bondi_disclaimer_accepted_v1";
+    const disclaimerOverlay = document.getElementById("disclaimerOverlay");
+    const disclaimerAccept = document.getElementById("disclaimerAccept");
+
+    function showDisclaimerIfNeeded() {
+      if (localStorage.getItem(DISCLAIMER_KEY) === "true") return;
+      disclaimerOverlay.hidden = false;
+      // Bloquear scroll del body mientras está abierto.
+      document.body.style.overflow = "hidden";
+      // Focus en el botón para que Enter lo dispare.
+      disclaimerAccept.focus();
+    }
+
+    function acceptDisclaimer() {
+      localStorage.setItem(DISCLAIMER_KEY, "true");
+      disclaimerOverlay.classList.add("fading-out");
+      setTimeout(() => {
+        disclaimerOverlay.hidden = true;
+        disclaimerOverlay.classList.remove("fading-out");
+        document.body.style.overflow = "";
+        inputEl.focus();
+      }, 250);
+    }
+
+    disclaimerAccept.addEventListener("click", acceptDisclaimer);
+    disclaimerOverlay.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        acceptDisclaimer();
+      }
+    });
+
     // Init.
     rebuildFromHistory();
+    showDisclaimerIfNeeded();
     inputEl.focus();
   </script>
 </body>

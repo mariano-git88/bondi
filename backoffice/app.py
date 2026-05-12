@@ -60,6 +60,7 @@ st.set_page_config(
     page_title="Bondi — Backoffice",
     page_icon="🤖",
     layout="wide",
+    initial_sidebar_state="expanded",
 )
 theme.apply_theme()
 
@@ -206,7 +207,7 @@ operator = st.sidebar.text_input("Operador (para feedback)", value="anon")
 
 _col_title, _col_btn = st.columns([5, 1], vertical_alignment="center")
 with _col_title:
-    st.title("Bondi")
+    st.title("¡La cocina de Bondi! — Admin")
     st.caption(
         f"Backend: `{backend_url}` · Editá hard rules, FAQs, PDFs y revisá conversaciones reales. "
         "Si es tu primera vez, abrí el tutorial."

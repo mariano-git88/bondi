@@ -67,7 +67,7 @@ html, body, [data-testid="stAppViewContainer"], [class*="css"] {{
 }}
 
 [data-testid="stAppViewContainer"] {{
-    background-color: {LINE_SOFTBG};
+    background-color: {WHITE};
 }}
 
 /* ----- Headings ----- */
@@ -442,7 +442,7 @@ header [data-testid="stDecoration"] {{ display: none; }}
     padding-left: 3rem !important;
     padding-right: 3rem !important;
     max-width: 1240px;
-    background-color: {LINE_SOFTBG};
+    background-color: {WHITE};
 }}
 
 /* Texto fuerte un pelín más oscuro */
